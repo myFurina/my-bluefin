@@ -104,16 +104,15 @@ modules:
         dnf install -y "${CLASH_RPM}"
         dnf clean all
 
-  # 6. 固化本机同款现代 Wayland 输入法方案 + Tailscale 系统托盘（已改挂图形会话生命周期）
+  # 6. 固化本机同款现代 Wayland 输入法方案（内置雾凇拼音 + GNOME 响应补丁 + Tailscale 托盘）
   - type: script
     snippets:
       - |
-        echo "==> 正在系统级固化 Fcitx5 输入法与 Tailscale 托盘自启..."
+        echo "==> 正在系统级配置 Fcitx5、雾凇拼音与 GNOME 响应通道..."
 
-        # 1. 注入 Fcitx5 环境变量
+        # 1. 注入 Fcitx5 基础环境变量
         mkdir -p /etc/environment.d
         cat << 'EOF' > /etc/environment.d/99-input-method.conf
-        # GTK_IM_MODULE=fcitx  # 禁用以避免 GTK4/Wayland/Flatpak 模块加载报错，走 text-input-v3
         QT_IM_MODULE=fcitx
         XMODIFIERS=@im=fcitx
         SDL_IM_MODULE=fcitx
@@ -140,7 +139,7 @@ modules:
         EOF
         ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/graphical-session.target.wants/fcitx5.service
 
-        # 3. GNOME 全局默认输入源：只保留英文 US 键盘，彻底静音 IBus
+        # 3. GNOME 全局默认配置：静音 IBus 并强制 GNOME xsettings 对接 Fcitx
         mkdir -p /etc/dconf/profile
         cat << 'EOF' > /etc/dconf/profile/user
         user-db:user
@@ -151,14 +150,58 @@ modules:
         cat << 'EOF' > /etc/dconf/db/local.d/01-input-sources
         [org/gnome/desktop/input-sources]
         sources=[('xkb', 'us')]
+
+        [org/gnome/settings-daemon/plugins/xsettings]
+        overrides={'Gtk/IMModule': <'fcitx'>}
         EOF
         dconf update
 
-        # 4. 全局开启 Tailscale 后台守护服务
-        systemctl enable tailscaled.service
+        # 4. 系统级打包注入【雾凇拼音（Rime-ICE）】官方词库
+        echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
+        mkdir -p /etc/skel/.local/share/fcitx5/rime
+        git clone --depth 1 https://github.com/iDvel/rime-ice.git /tmp/rime-ice
+        cp -r /tmp/rime-ice/* /etc/skel/.local/share/fcitx5/rime/
+        rm -rf /tmp/rime-ice
 
-        # 5. 全局配置 Tailscale 桌面托盘图标（绑定 graphical-session.target，杜绝 SSH/无屏崩溃）
-        mkdir -p /usr/lib/systemd/user/graphical-session.target.wants
+        # 5. 预置系统新用户默认输入法 Profile（默认直接激活 Rime 雾凇）
+        mkdir -p /etc/skel/.config/fcitx5
+        cat << 'EOF' > /etc/skel/.config/fcitx5/profile
+        [Groups/0]
+        Name=Default
+        Default Layout=us
+        DefaultIM=rime
+
+        [Groups/0/Items/0]
+        Name=keyboard-us
+        Layout=
+
+        [Groups/0/Items/1]
+        Name=rime
+        Layout=
+
+        [GroupOrder]
+        0=Default
+        EOF
+
+        # 6. 预置 GTK3/GTK4 与 Chromium/VS Code 的 Wayland IME 标志
+        mkdir -p /etc/skel/.config/gtk-3.0 /etc/skel/.config/gtk-4.0
+        cat << 'EOF' > /etc/skel/.config/gtk-3.0/settings.ini
+        [Settings]
+        gtk-im-module=fcitx
+        EOF
+        cat << 'EOF' > /etc/skel/.config/gtk-4.0/settings.ini
+        [Settings]
+        gtk-im-module=fcitx
+        EOF
+
+        cat << 'EOF' > /etc/skel/.config/chrome-flags.conf
+        --ozone-platform-hint=auto
+        --enable-wayland-ime
+        EOF
+        cp /etc/skel/.config/chrome-flags.conf /etc/skel/.config/code-flags.conf
+
+        # 7. 全局开启 Tailscale 后台守护服务并配置桌面托盘
+        systemctl enable tailscaled.service
         cat << 'EOF' > /usr/lib/systemd/user/tailscale-systray.service
         [Unit]
         Description=Tailscale System Tray
@@ -206,14 +249,14 @@ modules:
             cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf /etc/skel/.local/share/fonts/
         fi
 
-  # 8. 个人必备 Flatpak 软件（经双方确认的现代 v2 repo 规范，配置交大源）
+  # 8. 个人必备 Flatpak 软件（配置交大 Base URL，避免 404 summary 报错）
   - type: default-flatpaks
     configurations:
       - scope: system
         notify: true
         repo:
           name: flathub
-          url: https://mirror.sjtu.edu.cn/flathub/flathub.flatpakrepo
+          url: https://mirror.sjtu.edu.cn/flathub    # 【关键修正】必须为 Base URL，杜绝 /summary 404
           title: Flathub (SJTUG Mirror)
         install:
           - com.google.Chrome                   # 谷歌浏览器
@@ -222,7 +265,7 @@ modules:
           - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
           - org.gnome.Boxes                     # GNOME Boxes 虚拟机
 
-  # 9. 首次登录全自动装配（采用内核级 flock 内存排他锁，永不死锁 + 用户目录隔离日志）
+  # 9. 首次登录全自动装配（内核级 flock 内存锁 + 先 tap 后 trust + WezTerm 配置自动同步）
   - type: script
     snippets:
       - |
@@ -269,12 +312,18 @@ modules:
             cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
         fi
 
-        # 同步锁定用户级（--user）Flatpak 镜像为上海交大源
+        # 确保 WezTerm 终端配置自动下发至用户主目录
+        mkdir -p "$HOME/.config/wezterm"
+        if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /etc/skel/.config/wezterm/wezterm.lua ]; then
+            cp /etc/skel/.config/wezterm/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
+        fi
+
+        # 同步锁定用户级（--user）Flatpak 镜像为上海交大源（采用 Base URL）
         flatpak remote-add --user --if-not-exists flathub https://mirror.sjtu.edu.cn/flathub/flathub.flatpakrepo 2>/dev/null || true
-        flatpak remote-modify --user flathub --url=https://mirror.sjtu.edu.cn/flathub/flathub.flatpakrepo 2>/dev/null || true
+        flatpak remote-modify --user flathub --url=https://mirror.sjtu.edu.cn/flathub 2>/dev/null || true
 
         # 幂等性检测：已安装完成则直接退出
-        INSTALL_FLAG="$HOME/.config/simon-brew-installed"
+        INSTALL_FLAG="$HOME/.config/user-brew-installed"
         [ -f "$INSTALL_FLAG" ] && exit 0
 
         BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
@@ -288,9 +337,12 @@ modules:
                 exit 0
             fi
 
-            # 等待 Bluefin 自带解压 Homebrew 完成（最多等 60 秒）
+            # 初次启动触发 Rime 词库编译部署（确保雾凇词库立即可用）
+            which fcitx5-remote >/dev/null 2>&1 && fcitx5-remote -r 2>/dev/null || true
+
+            # 等待 Bluefin 自带解压 Homebrew 完成（最多等 120 秒）
             count=0
-            while [ ! -x "${BREW_BIN}" ] && [ $count -lt 30 ]; do
+            while [ ! -x "${BREW_BIN}" ] && [ $count -lt 60 ]; do
                 sleep 2
                 count=$((count + 1))
             done
@@ -309,13 +361,14 @@ modules:
             export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
             export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
 
-            # 自动信任第三方 Tap
-            "${BREW_BIN}" trust anomalyco/tap 2>/dev/null || true
+            # 显式先拉取第三方 Tap，再信任授权，彻底避免 bundle 因 untrusted tap 拒绝安装
+            "${BREW_BIN}" tap anomalyco/tap
+            "${BREW_BIN}" trust anomalyco/tap
 
             # 执行安装并通知桌面
             if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
                 touch "$INSTALL_FLAG"
-                which notify-send >/dev/null 2>&1 && notify-send "系统初始化通知" "Simon 的个人 Homebrew 开发工具已全自动安装完成！" -i package-x-generic
+                which notify-send >/dev/null 2>&1 && notify-send "系统初始化通知" "个人 Homebrew 开发工具已全自动安装完成！" -i package-x-generic
             fi
         ) >"$HOME/.local/state/brew-setup.log" 2>&1 &
         EOF
