@@ -15,11 +15,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
   cancel-in-progress: true
 
-# ====== 👇 核心修改：增加 BUILDX_NO_DEFAULT_ATTESTATIONS: "1" 👇 ======
+# 只加这一行：禁用 Docker Buildx 附带的空证明层，兼容阿里云 ACR
 env:
-  BUILDX_NO_DEFAULT_ATTESTATIONS: "1"  # 禁用 Buildx 附带的空证明层，完美兼容阿里云 ACR
-  ACR_REGISTRY: crpi-hyhirhi1wnbbg62m.cn-chengdu.personal.cr.aliyuncs.com
-  ACR_NAMESPACE: my_bluefin
+  BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
 
 jobs:
   bluebuild:
@@ -45,8 +43,8 @@ jobs:
           pr_event_number: ${{ github.event.number }}
           maximize_build_space: true
 
-          # 引用顶部环境变量与 Secrets 密码
-          registry: ${{ env.ACR_REGISTRY }}
-          registry_namespace: ${{ env.ACR_NAMESPACE }}
+         
+          registry: ${{ vars.ACR_REGISTRY }}
+          registry_namespace: ${{ vars.ACR_NAMESPACE }}
           registry_username: ${{ secrets.ACR_USERNAME }}
           registry_token: ${{ secrets.ACR_PASSWORD }}
