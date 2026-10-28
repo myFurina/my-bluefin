@@ -1,45 +1,118 @@
----
 # yaml-language-server: $schema=https://schema.blue-build.org/recipe-v1.json
-# image will be published to ghcr.io/<user>/<name>
 name: my-bluefin
-# description will be included in the image's metadata
-description: This is my personal OS image.
+description: 个人的全自动 Bluefin 纯净系统
 
-# the base image to build on top of (FROM) and the version tag to use
-base-image: ghcr.io/ublue-os/silverblue-main
-image-version: latest # You can pin to a specific version of Fedora as well
+# 1. 硬件底座：
+# 注意：若换到 Intel/AMD 设备，请将此处改为 ghcr.io/ublue-os/bluefin
+# 若换到 GTX 1060 等老卡，请改为 ghcr.io/ublue-os/bluefin-nvidia
+base-image: ghcr.io/ublue-os/bluefin-nvidia-open
+image-version: stable
 
-# module configuration, executed in order
-# you can include multiple instances of the same module
 modules:
-  - type: files
-    files:
-      - source: system
-        destination: / # copies files/system/* (* means everything inside it) into your image's root folder /
-
+  # 2. 原生系统级安装 Cloudflare WARP 与输入法核心（推荐使用更现代的 dnf 模块）
   - type: dnf
     repos:
-      copr:
-        - atim/starship
+      - https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo
     install:
-      packages:
-        - micro
-        - starship
-    remove:
-      packages:
-        # example: removing firefox (in favor of the flatpak)
-        # "firefox" is the main package, "firefox-langpacks" is a dependency
-        - firefox
-        - firefox-langpacks # also remove firefox dependency (not required for all packages, this is a special case)
+      - cloudflare-warp
+      # 推荐把 fcitx5 基础栈打入原生系统层，彻底避免 Flatpak 沙盒输入法不同步的问题
+      - fcitx5
+      - fcitx5-rime
+      - fcitx5-gtk
+      - fcitx5-qt
+      - fcitx5-configtool
 
+  # 3. 动态抓取 GitHub 最新版 Clash Verge 原生打入系统
+  - type: script
+    snippets:
+      - |
+        echo "==> 正在精准解析 GitHub 最新版 Clash Verge..."
+        FINAL_URL=$(curl -sfSL -o /dev/null -w '%{url_effective}' https://github.com/clash-verge-rev/clash-verge-rev/releases/latest)
+        TAG="${FINAL_URL##*/}"
+        VER="${TAG#v}"
+        CLASH_RPM="https://github.com/clash-verge-rev/clash-verge-rev/releases/download/${TAG}/Clash.Verge-${VER}-1.x86_64.rpm"
+        echo "==> 检测到最新版本 [${VER}]，开始通过 dnf 安装: ${CLASH_RPM}"
+        dnf install -y "${CLASH_RPM}"
+        dnf clean all
+
+  # 4. 个人必备 Flatpak 软件
   - type: default-flatpaks
     configurations:
-      - notify: true # Send notification after install/uninstall is finished (true/false)
+      - notify: true
         scope: system
-        # If no repo information is specified, Flathub will be used by default
-        install: # system flatpaks we want all users to have and not remove
-          - org.mozilla.firefox
-          - org.gnome.Loupe
-      - scope: user # Also add Flathub user repo, but no user packages
+        install:
+          - com.google.Chrome                   # 谷歌浏览器
+          - org.onlyoffice.desktopeditors       # ONLYOFFICE 办公套件
+          - org.localsend.localsend_app         # LocalSend 局域网传输
+          - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
 
-  - type: signing # this sets up the proper policy & signing files for signed images to work fully
+  # 5. 首次登录全自动装配 Homebrew（已修复网络竞态与重试逻辑）
+  - type: script
+    snippets:
+      - |
+        echo "==> 正在系统级植入 Homebrew 首次登录全自动装配钩子..."
+
+        mkdir -p /usr/share/ublue-os/my-brew
+        cat << 'EOF' > /usr/share/ublue-os/my-brew/Brewfile
+        tap "ublue-os/tap"
+        tap "anomalyco/tap"
+        cask "ublue-os/tap/visual-studio-code-linux"
+        brew "node"
+        brew "pnpm"
+        brew "python@3.15"
+        brew "uv"
+        brew "ripgrep"
+        brew "jq"
+        brew "zstd"
+        brew "openssl@4"
+        brew "anomalyco/tap/opencode-v2"
+        brew "merve"
+        EOF
+
+        mkdir -p /usr/share/ublue-os/user-setup.hooks.d
+        cat << 'EOF' > /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
+        #!/usr/bin/env bash
+        source /usr/lib/ublue/setup-services/libsetup.sh
+
+        # 检查是否已经成功运行过，成功过则退出
+        if [ -f "$HOME/.config/simon-brew-installed" ]; then
+            exit 0
+        fi
+
+        BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
+
+        # 确保后台执行，避免阻塞用户登录桌面的速度
+        (
+            echo "等待 Homebrew 初始化完成并检测网络连接..."
+            
+            # 等待 brew 就绪（最多等 120 秒）
+            count=0
+            while [ ! -x "${BREW_BIN}" ] && [ $count -lt 60 ]; do
+                sleep 2
+                ((count++))
+            done
+
+            # 校验网络是否畅通（以 GitHub 为探针，最多等待 180 秒）
+            net_count=0
+            while ! curl -s --connect-timeout 3 https://github.com > /dev/null && [ $net_count -lt 60 ]; do
+                sleep 3
+                ((net_count++))
+            done
+
+            if [ -x "${BREW_BIN}" ] && curl -s --connect-timeout 3 https://github.com > /dev/null; then
+                eval "$("${BREW_BIN}" shellenv)"
+                echo "正在执行 brew bundle..."
+                if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
+                    # 只有真正安装成功后才打上标记，防止断网导致死锁
+                    mkdir -p "$HOME/.config"
+                    touch "$HOME/.config/simon-brew-installed"
+                    notify-send "开发环境配置完成" "Homebrew 依赖包已全自动安装完毕！"
+                fi
+            fi
+        ) &
+        EOF
+
+        chmod +x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
+
+  # 6. 容器镜像签名
+  - type: signing
