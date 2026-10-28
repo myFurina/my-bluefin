@@ -9,18 +9,19 @@ base-image: ghcr.io/ublue-os/bluefin-nvidia-open
 image-version: stable
 
 modules:
-  # 2. 原生系统级安装 Cloudflare WARP 与输入法核心（推荐使用更现代的 dnf 模块）
+  # 2. 原生系统级安装 Cloudflare WARP 与输入法核心
   - type: dnf
     repos:
-      - https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo
+      files:
+        - https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo
     install:
-      - cloudflare-warp
-      # 推荐把 fcitx5 基础栈打入原生系统层，彻底避免 Flatpak 沙盒输入法不同步的问题
-      - fcitx5
-      - fcitx5-rime
-      - fcitx5-gtk
-      - fcitx5-qt
-      - fcitx5-configtool
+      packages:
+        - cloudflare-warp
+        - fcitx5
+        - fcitx5-rime
+        - fcitx5-gtk
+        - fcitx5-qt
+        - fcitx5-configtool
 
   # 3. 动态抓取 GitHub 最新版 Clash Verge 原生打入系统
   - type: script
