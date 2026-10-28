@@ -1,15 +1,16 @@
 # yaml-language-server: $schema=https://schema.blue-build.org/recipe-v1.json
 name: my-bluefin
-description: 个人的全自动 Bluefin 纯净系统
+description: 个人的全自动 Bluefin 纯净系统（Nvidia + 国内镜像加速 + 全自动装配）
 
 # 1. 硬件底座：
-# 注意：若换到 Intel/AMD 设备，请将此处改为 ghcr.io/ublue-os/bluefin
-# 若换到 GTX 1060 等老卡，请改为 ghcr.io/ublue-os/bluefin-nvidia
+# 说明：若换到 Intel/AMD 核显或纯 A 卡设备，请将此处改为 ghcr.io/ublue-os/bluefin
+# 若换到 GTX 1060 等 Pascal 架构老卡，请改为 ghcr.io/ublue-os/bluefin-nvidia
+# 当前：RTX 20/30/40 等新显卡推荐使用 nvidia-open
 base-image: ghcr.io/ublue-os/bluefin-nvidia-open
 image-version: stable
 
 modules:
-  # 2. 原生系统级安装 Cloudflare WARP 与输入法核心
+  # 2. 原生系统级安装 Cloudflare WARP 与输入法核心（解决 Flatpak 版输入法无法嵌入系统的问题）
   - type: dnf
     repos:
       files:
@@ -36,23 +37,40 @@ modules:
         dnf install -y "${CLASH_RPM}"
         dnf clean all
 
-  # 4. 个人必备 Flatpak 软件
+  # 4. 个人必备 Flatpak 软件（配置上海交大 SJTUG 镜像源，国内免翻墙高速下载）
   - type: default-flatpaks
     configurations:
-      - notify: true
-        scope: system
+      - scope: system
+        notify: true
+        repo:
+          name: flathub
+          url: https://mirror.sjtu.edu.cn/flathub/flathub.flatpakrepo
+          title: Flathub (SJTUG Mirror)
         install:
           - com.google.Chrome                   # 谷歌浏览器
           - org.onlyoffice.desktopeditors       # ONLYOFFICE 办公套件
           - org.localsend.localsend_app         # LocalSend 局域网传输
           - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
 
-  # 5. 首次登录全自动装配 Homebrew（已修复网络竞态与重试逻辑）
+  # 5. 首次登录全自动装配 Homebrew（国内清华源加速 + Tap 信任 + 全局环境变量自动就绪）
   - type: script
     snippets:
       - |
-        echo "==> 正在系统级植入 Homebrew 首次登录全自动装配钩子..."
+        echo "==> 正在系统级配置 Homebrew 全局环境与首次登录装配钩子..."
 
+        # 1. 全局配置 Homebrew 环境变量与清华大学镜像源（打开任何终端即可直接使用 brew 且国内免翻墙高速下载）
+        mkdir -p /etc/profile.d
+        cat << 'EOF' > /etc/profile.d/00-linuxbrew.sh
+        export HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
+        export HOMEBREW_CELLAR="/home/linuxbrew/.linuxbrew/Cellar"
+        export HOMEBREW_REPOSITORY="/home/linuxbrew/.linuxbrew/Homebrew"
+        export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
+        export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
+        export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+        EOF
+        chmod 644 /etc/profile.d/00-linuxbrew.sh
+
+        # 2. 将个人定制 Brewfile 写入系统共享目录
         mkdir -p /usr/share/ublue-os/my-brew
         cat << 'EOF' > /usr/share/ublue-os/my-brew/Brewfile
         tap "ublue-os/tap"
@@ -66,54 +84,58 @@ modules:
         brew "jq"
         brew "zstd"
         brew "openssl@4"
-        brew "anomalyco/tap/opencode-v2"
+        brew "opencode-v2"
         brew "merve"
         EOF
 
+        # 3. 注入 Bluefin 官方首登执行脚本
         mkdir -p /usr/share/ublue-os/user-setup.hooks.d
         cat << 'EOF' > /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
         #!/usr/bin/env bash
         source /usr/lib/ublue/setup-services/libsetup.sh
 
-        # 检查是否已经成功运行过，成功过则退出
-        if [ -f "$HOME/.config/simon-brew-installed" ]; then
-            exit 0
-        fi
+        # 幂等性检测：若已安装完成标记存在，则直接退出
+        INSTALL_FLAG="$HOME/.config/simon-brew-installed"
+        [ -f "$INSTALL_FLAG" ] && exit 0
 
         BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
 
-        # 确保后台执行，避免阻塞用户登录桌面的速度
+        # 异步在后台运行，防止卡住用户初次登录桌面
         (
-            echo "等待 Homebrew 初始化完成并检测网络连接..."
-            
-            # 等待 brew 就绪（最多等 120 秒）
+            # 1. 等待 Bluefin 自带解压 Homebrew 完成（最多等 60 秒）
             count=0
-            while [ ! -x "${BREW_BIN}" ] && [ $count -lt 60 ]; do
+            while [ ! -x "${BREW_BIN}" ] && [ $count -lt 30 ]; do
                 sleep 2
-                ((count++))
+                count=$((count + 1))
             done
 
-            # 校验网络是否畅通（以 GitHub 为探针，最多等待 180 秒）
+            [ ! -x "${BREW_BIN}" ] && exit 0
+
+            # 2. 国内网络探测（检测国内镜像连通性，避免 curl github.com 超时判死）
             net_count=0
-            while ! curl -s --connect-timeout 3 https://github.com > /dev/null && [ $net_count -lt 60 ]; do
-                sleep 3
-                ((net_count++))
+            while ! curl -s --connect-timeout 2 https://mirrors.tuna.tsinghua.edu.cn > /dev/null && [ $net_count -lt 30 ]; do
+                sleep 2
+                net_count=$((net_count + 1))
             done
 
-            if [ -x "${BREW_BIN}" ] && curl -s --connect-timeout 3 https://github.com > /dev/null; then
-                eval "$("${BREW_BIN}" shellenv)"
-                echo "正在执行 brew bundle..."
-                if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
-                    # 只有真正安装成功后才打上标记，防止断网导致死锁
-                    mkdir -p "$HOME/.config"
-                    touch "$HOME/.config/simon-brew-installed"
-                    notify-send "开发环境配置完成" "Homebrew 依赖包已全自动安装完毕！"
-                fi
+            # 3. 加载环境变量与国内清华 Bottle 镜像（解决 ghcr.io 连接被重置问题）
+            eval "$("${BREW_BIN}" shellenv)"
+            export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
+            export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+
+            # 4. 自动信任第三方 Tap（解决 Homebrew 新版 Tap-Trust 限制导致的忽略软件问题）
+            "${BREW_BIN}" trust anomalyco/tap ublue-os/tap 2>/dev/null || true
+
+            # 5. 执行安装并通知桌面
+            if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
+                mkdir -p "$(dirname "$INSTALL_FLAG")"
+                touch "$INSTALL_FLAG"
+                which notify-send >/dev/null 2>&1 && notify-send "系统初始化通知" "Simon 的个人 Homebrew 开发工具已全自动安装完成！" -i package-x-generic
             fi
-        ) &
+        ) >/dev/null 2>&1 &
         EOF
 
         chmod +x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
 
-  # 6. 容器镜像签名
+  # 6. 容器镜像加密数字签名（必选）
   - type: signing
