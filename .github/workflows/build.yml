@@ -35,8 +35,11 @@ jobs:
         with:
           recipe: ${{ matrix.recipe }}
           cosign_private_key: ${{ secrets.SIGNING_SECRET }}
-          registry_token: ${{ github.token }}
           pr_event_number: ${{ github.event.number }}
-
-          # enabled by default, disable if your image is small and you want faster builds
           maximize_build_space: true
+
+          # ====== 👇 阿里云 ACR 配置（直接调用网页配置的变量与密钥）👇 ======
+          registry: ${{ vars.ACR_REGISTRY }}
+          registry_namespace: ${{ vars.ACR_NAMESPACE }}
+          registry_username: ${{ secrets.ACR_USERNAME }}
+          registry_token: ${{ secrets.ACR_PASSWORD }}
