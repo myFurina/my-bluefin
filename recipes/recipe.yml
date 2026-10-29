@@ -269,6 +269,25 @@ modules:
         XMODIFIERS=@im=fcitx
         EOF
 
+        # 3. 创建系统级 Flatpak 前置自愈服务：在自动下载前强制将 Flathub 锁定为交大高速镜像
+        mkdir -p /usr/lib/systemd/system /usr/lib/systemd/system-preset
+        cat << 'EOF' > /usr/lib/systemd/system/flatpak-sjtu-mirror.service
+        [Unit]
+        Description=Configure System Flatpak SJTU Mirror
+        Before=system-flatpak-setup.service
+        After=network.target
+
+        [Service]
+        Type=oneshot
+        ExecStart=/bin/sh -c '/usr/bin/flatpak remote-modify --system flathub --url=https://mirror.sjtu.edu.cn/flathub 2>/dev/null || true'
+        RemainAfterExit=yes
+
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+
+        echo "enable flatpak-sjtu-mirror.service" > /usr/lib/systemd/system-preset/50-flatpak-mirror.preset
+
   # 7. 必备 Flatpak 软件（融合官方模板 + 个人专属清单 + 交大镜像源）
   - type: default-flatpaks
     configurations:
@@ -319,6 +338,11 @@ modules:
         brew "anomalyco/tap/opencode-v2"
         brew "merve"
         EOF
+
+        # 3. 在构建阶段预拉取第三方 Tap (anomalyco/tap) 固化至出厂资产，免除开机时对 GitHub 的网络请求
+        echo "==> 正在构建期预拉取 anomalyco/tap 固化至出厂资产..."
+        mkdir -p /usr/share/ublue-os/taps/anomalyco
+        git clone --depth 1 https://github.com/anomalyco/homebrew-tap.git /usr/share/ublue-os/taps/anomalyco/homebrew-tap
 
         # 3. 将个人定制 WezTerm 终端配置写入系统共享目录（纯 /usr/share 纯净方案）
         cat << 'EOF' > /usr/share/ublue-os/my-brew/wezterm.lua
@@ -726,9 +750,15 @@ modules:
             export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
             export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
 
-            # 显式先拉取第三方 Tap，再信任授权，彻底避免 bundle 因 untrusted tap 拒绝安装
-            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在拉取 Tap 并信任授权..."
-            "${BREW_BIN}" tap anomalyco/tap 2>/dev/null || true
+            # 若系统预置了出厂 anomalyco/tap，则直接同步至 Homebrew 目录，免除对 GitHub 的网络请求
+            if [ -d /usr/share/ublue-os/taps/anomalyco/homebrew-tap ]; then
+                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在导入出厂预置的 anomalyco/tap..."
+                mkdir -p /var/home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/anomalyco
+                cp -rn /usr/share/ublue-os/taps/anomalyco/homebrew-tap /var/home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/anomalyco/ 2>/dev/null || true
+            fi
+
+            # 信任 Tap 授权，彻底避免 bundle 因 untrusted tap 拒绝安装
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在信任 Tap 授权..."
             "${BREW_BIN}" trust anomalyco/tap 2>/dev/null || true
 
             # 执行安装并通知桌面
