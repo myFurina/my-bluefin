@@ -162,14 +162,20 @@ modules:
         EOF
         dconf update
 
-        # 4. 系统级植入 GNOME Shell Kimpanel 官方原版扩展
-        echo "==> 正在系统级构建并植入 Kimpanel (Input Method Panel) 官方扩展..."
-        git clone --depth 1 https://github.com/wengxt/gnome-shell-extension-kimpanel.git /tmp/kimpanel-src
-        mkdir -p /usr/share/gnome-shell/extensions/kimpanel@kde.org
-        cp -r /tmp/kimpanel-src/src/* /usr/share/gnome-shell/extensions/kimpanel@kde.org/
-        cp /tmp/kimpanel-src/metadata.json /usr/share/gnome-shell/extensions/kimpanel@kde.org/
-        glib-compile-schemas /usr/share/gnome-shell/extensions/kimpanel@kde.org/schemas/
-        rm -rf /tmp/kimpanel-src
+        # 4. 从 GNOME 官方扩展中心动态获取匹配当前 GNOME 版本的最新 Kimpanel 发行包
+        echo "==> 正在获取 GNOME 官方最新版 Kimpanel..."
+        SHELL_VER=$(gnome-shell --version | awk '{print $3}' | cut -d'.' -f1)
+        DOWNLOAD_URL=$(curl -s "https://extensions.gnome.org/extension-info/?uuid=kimpanel@kde.org&shell_version=${SHELL_VER}" | grep -o '"download_url": *"[^"]*"' | cut -d'"' -f4)
+
+        if [ -n "$DOWNLOAD_URL" ]; then
+            mkdir -p /usr/share/gnome-shell/extensions/kimpanel@kde.org
+            curl -sSL "https://extensions.gnome.org${DOWNLOAD_URL}" -o /tmp/kimpanel.zip
+            unzip -qo /tmp/kimpanel.zip -d /usr/share/gnome-shell/extensions/kimpanel@kde.org/
+            rm -f /tmp/kimpanel.zip
+            glib-compile-schemas /usr/share/gnome-shell/extensions/kimpanel@kde.org/schemas/ 2>/dev/null || true
+        else
+            echo "==> 警告: 未能从 GNOME Extensions API 解析到 Kimpanel 下载链接"
+        fi
 
         # 5. 系统级打包注入【雾凇拼音（Rime-ICE）】官方词库
         echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
@@ -298,12 +304,12 @@ modules:
         tap "anomalyco/tap"
         brew "node"
         brew "pnpm"
-        brew "python@3.15"
+        brew "python"
         brew "uv"
         brew "ripgrep"
         brew "jq"
         brew "zstd"
-        brew "openssl@4"
+        brew "openssl"
         brew "anomalyco/tap/opencode-v2"
         brew "merve"
         EOF
