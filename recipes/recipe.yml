@@ -65,9 +65,10 @@ modules:
         echo "==> 正在系统级植入 Cloudflare WARP 一键启动与退出桌面图标，并通过 preset 关闭自启..."
         mkdir -p /usr/share/applications
 
-        # 禁用 warp-svc 服务默认开机自启（走 /usr/lib 标准预设，不碰 /etc）
-        mkdir -p /usr/lib/systemd/system-preset
+        # 禁用 warp-svc 与 warp-taskbar 服务默认自启（走 /usr/lib 标准预设，不碰 /etc）
+        mkdir -p /usr/lib/systemd/system-preset /usr/lib/systemd/user-preset
         echo "disable warp-svc.service" > /usr/lib/systemd/system-preset/50-warp.preset
+        echo "disable warp-taskbar.service" > /usr/lib/systemd/user-preset/50-warp.preset
 
         # 启动图标（走 Polkit 授权，无需 sudo）
         cat << 'EOF' > /usr/share/applications/cf-start.desktop
@@ -158,7 +159,34 @@ modules:
         EOF
         glib-compile-schemas /usr/share/glib-2.0/schemas/
 
-        # 4. Fcitx5 顶栏托盘与候选框通过 Wayland / AppIndicator 原生集成，无需第三方扩展
+        # 4. 从 GNOME 官方扩展中心获取匹配的 Kimpanel 官方扩展
+        echo "==> 正在精准获取 GNOME 官方最新版 Kimpanel 扩展..."
+        UUID="kimpanel@kde.org"
+        VERSION_TAG=$(curl -sSL "https://extensions.gnome.org/extension-query/?search=${UUID}" | python3 -c '
+        import sys, json
+        try:
+            data = json.load(sys.stdin)
+            for ext in data.get("extensions", []):
+                if ext.get("uuid") == "kimpanel@kde.org":
+                    print(max(x["pk"] for x in ext["shell_version_map"].values()))
+                    sys.exit(0)
+        except Exception:
+            pass
+        ' 2>/dev/null || true)
+
+        if [ -n "$VERSION_TAG" ]; then
+            echo "==> 成功解析到 Kimpanel 最新版本 tag: [${VERSION_TAG}]，正在下载..."
+            mkdir -p /usr/share/gnome-shell/extensions/kimpanel@kde.org
+            curl -sSL "https://extensions.gnome.org/download-extension/${UUID}.shell-extension.zip?version_tag=${VERSION_TAG}" -o /tmp/kimpanel.zip
+            unzip -qo /tmp/kimpanel.zip -d /usr/share/gnome-shell/extensions/kimpanel@kde.org/
+            rm -f /tmp/kimpanel.zip
+            # 扩展兼容性列表，避免在新版 GNOME Shell 46/47/48 上被版本检查拦截
+            sed -i 's/"shell-version": \[/"shell-version": ["44", "45", "46", "47", "48", /g' /usr/share/gnome-shell/extensions/kimpanel@kde.org/metadata.json 2>/dev/null || true
+            glib-compile-schemas /usr/share/gnome-shell/extensions/kimpanel@kde.org/schemas/ 2>/dev/null || true
+            echo "==> Kimpanel 官方扩展已成功解压并预置到 /usr/share/gnome-shell/extensions/kimpanel@kde.org"
+        else
+            echo "==> 警告: 无法从 GNOME Extensions API 解析到版本 tag，跳过在线下载"
+        fi
 
         # 5. 系统级预置【雾凇拼音（Rime-ICE）】与出厂配置模板至 /usr/share/ublue-os
         echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
@@ -617,13 +645,19 @@ modules:
             cp /usr/share/ublue-os/fcitx5-profile/gtk3-settings.ini "$HOME/.config/gtk-3.0/settings.ini"
         fi
 
-        # 确保禁用 Cloudflare WARP 开机自启动托盘
-        cat << 'AUTOLOAD' > "$HOME/.config/autostart/warp-taskbar.desktop"
+        # 确保禁用 Cloudflare WARP 开机自启动托盘（双重屏蔽：XDG Autostart 与 systemd user 单元）
+        mkdir -p "$HOME/.config/autostart"
+        cat << 'AUTOLOAD' > "$HOME/.config/autostart/com.cloudflare.WarpTaskbar.desktop"
         [Desktop Entry]
         Type=Application
         Name=Cloudflare WARP
         Hidden=true
         AUTOLOAD
+        cp "$HOME/.config/autostart/com.cloudflare.WarpTaskbar.desktop" "$HOME/.config/autostart/warp-taskbar.desktop" 2>/dev/null || true
+
+        # 彻底停用并屏蔽用户级 systemd warp-taskbar 服务
+        which systemctl >/dev/null 2>&1 && systemctl --user disable --now warp-taskbar 2>/dev/null || true
+        which systemctl >/dev/null 2>&1 && systemctl --user mask warp-taskbar 2>/dev/null || true
 
         # 确保系统级预置的 Kimpanel 扩展自动激活
         which gnome-extensions >/dev/null 2>&1 && gnome-extensions enable kimpanel@kde.org 2>/dev/null || true
