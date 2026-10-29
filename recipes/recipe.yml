@@ -28,6 +28,8 @@ modules:
         - fcitx5
         - fcitx5-chinese-addons        # 必备：中文拼音、双拼、云拼音支持
         - fcitx5-rime                  # 必备：Rime 引擎
+        - librime-lua                  # 必备：Rime Lua 插件（激活雾凇拼音 rq/sj 动态日期时间脚本）
+        - gnome-shell-extension-kimpanel # 必备：Fedora 官方原生 Kimpanel 顶栏扩展
         - fcitx5-gtk                   # GTK 模块支持
         - fcitx5-qt                    # Qt5 模块支持
         - fcitx5-qt6                   # Qt6 模块支持
@@ -157,20 +159,8 @@ modules:
         EOF
         glib-compile-schemas /usr/share/glib-2.0/schemas/
 
-        # 4. 从 GNOME 官方扩展中心动态获取匹配当前 GNOME 版本的最新 Kimpanel 发行包
-        echo "==> 正在获取 GNOME 官方最新版 Kimpanel..."
-        SHELL_VER=$(gnome-shell --version | awk '{print $3}' | cut -d'.' -f1)
-        DOWNLOAD_URL=$(curl -s "https://extensions.gnome.org/extension-info/?uuid=kimpanel@kde.org&shell_version=${SHELL_VER}" | grep -o '"download_url": *"[^"]*"' | cut -d'"' -f4)
-
-        if [ -n "$DOWNLOAD_URL" ]; then
-            mkdir -p /usr/share/gnome-shell/extensions/kimpanel@kde.org
-            curl -sSL "https://extensions.gnome.org${DOWNLOAD_URL}" -o /tmp/kimpanel.zip
-            unzip -qo /tmp/kimpanel.zip -d /usr/share/gnome-shell/extensions/kimpanel@kde.org/
-            rm -f /tmp/kimpanel.zip
-            glib-compile-schemas /usr/share/gnome-shell/extensions/kimpanel@kde.org/schemas/ 2>/dev/null || true
-        else
-            echo "==> 警告: 未能从 GNOME Extensions API 解析到 Kimpanel 下载链接"
-        fi
+        # 4. Kimpanel 顶栏扩展已由 Fedora 官方 RPM (gnome-shell-extension-kimpanel) 规范装入系统
+        echo "==> Kimpanel 扩展已由系统 RPM 原生安装在 /usr/share/gnome-shell/extensions/kimpanel@kde.org"
 
         # 5. 系统级预置【雾凇拼音（Rime-ICE）】与出厂配置模板至 /usr/share/ublue-os
         echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
@@ -257,10 +247,8 @@ modules:
     configurations:
       - scope: system
         notify: true
-        repo:
-          name: flathub
-          url: https://mirror.sjtu.edu.cn/flathub    # Base URL，杜绝 /summary 404
-          title: Flathub (SJTUG Mirror)
+        repo-name: flathub
+        repo-url: https://mirror.sjtu.edu.cn/flathub    # Base URL，杜绝 /summary 404
         install:
           - org.mozilla.firefox                 # 【来自模板】火狐浏览器
           - org.gnome.Loupe                     # 【来自模板】现代图片查看器 Loupe
@@ -270,10 +258,8 @@ modules:
           - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
           - org.gnome.Boxes                     # GNOME Boxes 虚拟机
       - scope: user
-        repo:
-          name: flathub
-          url: https://mirror.sjtu.edu.cn/flathub
-          title: Flathub (SJTUG Mirror)
+        repo-name: flathub
+        repo-url: https://mirror.sjtu.edu.cn/flathub
 
   # 8. 首次登录全自动装配（Homebrew 镜像 + WezTerm 霓虹赛博配置 + 纯 /usr 钩子）
   - type: script
@@ -673,17 +659,23 @@ modules:
             fi
 
             # 初次启动触发 Rime 词库编译部署（确保雾凇词库立即可用）
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在触发 Rime 词库重新部署与编译..."
             which fcitx5-remote >/dev/null 2>&1 && fcitx5-remote -r 2>/dev/null || true
 
             # 等待 Bluefin 自带解压 Homebrew 完成（最多等 120 秒）
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在检查 Homebrew 核心程序 (${BREW_BIN})..."
             count=0
             while [ ! -x "${BREW_BIN}" ] && [ $count -lt 60 ]; do
                 sleep 2
                 count=$((count + 1))
             done
 
-            [ ! -x "${BREW_BIN}" ] && exit 0
+            if [ ! -x "${BREW_BIN}" ]; then
+                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 错误: 超时未能检测到可执行的 Homebrew: ${BREW_BIN}"
+                exit 0
+            fi
 
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 检测到 Homebrew 已就绪，探测国内清华源连通性..."
             # 国内网络探测（检测清华镜像连通性，避免 curl github.com 超时判死）
             net_count=0
             while ! curl -s --connect-timeout 2 https://mirrors.tuna.tsinghua.edu.cn > /dev/null && [ $net_count -lt 30 ]; do
@@ -697,12 +689,15 @@ modules:
             export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
 
             # 显式先拉取第三方 Tap，再信任授权，彻底避免 bundle 因 untrusted tap 拒绝安装
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在拉取 Tap 并信任授权..."
             "${BREW_BIN}" tap anomalyco/tap
             "${BREW_BIN}" trust anomalyco/tap
 
             # 执行安装并通知桌面
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 开始执行 brew bundle 批量安装..."
             if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
                 touch "$INSTALL_FLAG"
+                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] Homebrew 所有依赖安装成功！"
                 which notify-send >/dev/null 2>&1 && notify-send "系统初始化通知" "个人 Homebrew 开发工具已全自动安装完成！" -i package-x-generic
             fi
         ) >"$HOME/.local/state/brew-setup.log" 2>&1 &
