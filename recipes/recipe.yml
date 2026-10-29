@@ -10,19 +10,20 @@ base-image: ghcr.io/ublue-os/bluefin-nvidia-open
 image-version: stable
 
 modules:
-  # 1. 原生系统级安装：VS Code、Cloudflare WARP、WezTerm Nightly、输入法核心（含 Qt6 与 Droid 字体）
+  # 1. 原生系统级安装：VS Code、Cloudflare WARP、输入法核心（含 Qt6 与 Droid 字体）
+  # 【排查步骤 3】：临时注释 wezterm-nightly 与 wezterm，排查 /usr/etc 冲突来源
   - type: dnf
     repos:
       files:
         - https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo
         - https://packages.microsoft.com/yumrepos/vscode/config.repo  # 微软 VS Code 官方源
-      copr:
-        - wezfurlong/wezterm-nightly   # WezTerm 每日构建源
+      # copr:
+      #   - wezfurlong/wezterm-nightly   # WezTerm 每日构建源
     install:
       packages:
         - code                         # 原生 VS Code（自带官方原生图标、右键菜单与 URL 协议）
         - cloudflare-warp              # Cloudflare WARP 客户端
-        - wezterm                      # WezTerm Nightly（自带官方图标）
+        # - wezterm                      # WezTerm Nightly（自带官方图标）
         - google-droid-sans-fonts      # 【精准补全】提供 LocalSend 修复必需的 DroidSansFallbackFull.ttf
         - fcitx5
         - fcitx5-chinese-addons        # 必备：中文拼音、双拼、云拼音支持
@@ -32,10 +33,18 @@ modules:
         - fcitx5-qt6                   # 【精准补全】Qt6 模块支持，确保现代 Qt6 应用输入无障碍
         - fcitx5-configtool            # 图形化配置面板
 
-  # 3. 注入标准桌面安全策略（Polkit 规则）：放入 /usr/share 符合 ostree 最佳规范
+  # 2. 注入标准桌面安全策略（Polkit 规则）：放入 /usr/share 符合 ostree 最佳规范
   - type: script
     snippets:
       - |
+        echo "==> [DIAGNOSTIC] 检查 DNF 安装后是否存在 /usr/etc..."
+        if [ -d /usr/etc ]; then
+            echo "==> [DIAGNOSTIC] 警告: 检测到 /usr/etc 存在！文件列表："
+            find /usr/etc
+        else
+            echo "==> [DIAGNOSTIC] DNF 阶段后未发现 /usr/etc。"
+        fi
+
         echo "==> 正在配置 WARP 服务的桌面 Polkit 安全提权策略..."
         mkdir -p /usr/share/polkit-1/rules.d
         cat << 'EOF' > /usr/share/polkit-1/rules.d/50-warp-service.rules
@@ -93,24 +102,24 @@ modules:
         Keywords=warp;cloudflare;stop;exit;quit;
         EOF
 
-  # 5. 动态抓取 GitHub 最新版 Clash Verge 原生打入系统（加入异常边界校验断言）
-  - type: script
-    snippets:
-      - |
-        echo "==> 正在精准解析 GitHub 最新版 Clash Verge..."
-        FINAL_URL=$(curl -sfSL -o /dev/null -w '%{url_effective}' https://github.com/clash-verge-rev/clash-verge-rev/releases/latest)
-        TAG="${FINAL_URL##*/}"
-        VER="${TAG#v}"
-
-        if [ -z "${FINAL_URL}" ] || [ "${TAG}" = "latest" ] || [ -z "${VER}" ]; then
-            echo "==> 错误: 无法解析 Clash Verge 最新发布版本，请检查网络或 GitHub 状态。"
-            exit 1
-        fi
-
-        CLASH_RPM="https://github.com/clash-verge-rev/clash-verge-rev/releases/download/${TAG}/Clash.Verge-${VER}-1.x86_64.rpm"
-        echo "==> 检测到最新版本 [${VER}]，开始通过 dnf 安装: ${CLASH_RPM}"
-        dnf install -y "${CLASH_RPM}"
-        dnf clean all
+  # 4. 【排查步骤 3】：临时注释 Clash Verge 安装，排查 /usr/etc 冲突来源
+  # - type: script
+  #   snippets:
+  #     - |
+  #       echo "==> 正在精准解析 GitHub 最新版 Clash Verge..."
+  #       FINAL_URL=$(curl -sfSL -o /dev/null -w '%{url_effective}' https://github.com/clash-verge-rev/clash-verge-rev/releases/latest)
+  #       TAG="${FINAL_URL##*/}"
+  #       VER="${TAG#v}"
+  #
+  #       if [ -z "${FINAL_URL}" ] || [ "${TAG}" = "latest" ] || [ -z "${VER}" ]; then
+  #           echo "==> 错误: 无法解析 Clash Verge 最新发布版本，请检查网络或 GitHub 状态。"
+  #           exit 1
+  #       fi
+  #
+  #       CLASH_RPM="https://github.com/clash-verge-rev/clash-verge-rev/releases/download/${TAG}/Clash.Verge-${VER}-1.x86_64.rpm"
+  #       echo "==> 检测到最新版本 [${VER}]，开始通过 dnf 安装: ${CLASH_RPM}"
+  #       dnf install -y "${CLASH_RPM}"
+  #       dnf clean all
 
   # 6. 固化现代 Wayland 输入法方案（极简纯净版：内置雾凇拼音 + Kimpanel 官方扩展 + 专属 GTK 兼容）
   - type: script
@@ -689,6 +698,14 @@ modules:
         EOF
 
         chmod +x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
+
+        echo "==> [DIAGNOSTIC] 构建末尾全面检查 /usr/etc 状态..."
+        if [ -d /usr/etc ]; then
+            echo "==> [DIAGNOSTIC] 严重发现: 构建最终阶段存在 /usr/etc！完整文件树如下："
+            find /usr/etc
+        else
+            echo "==> [DIAGNOSTIC] 良好: 构建最终阶段未发现 /usr/etc 目录。"
+        fi
 
   # 10. 容器镜像加密数字签名（必选）
   - type: signing
