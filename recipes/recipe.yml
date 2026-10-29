@@ -1,14 +1,14 @@
 # yaml-language-server: $schema=https://schema.blue-build.org/recipe-v1.json
 name: my-bluefin
-description: 个人的全自动 Bluefin 纯净系统（Nvidia + Starship/Micro + VS Code + WezTerm + Boxes + LocalSend 字体 + 现代输入法）
+description: 个人的全自动 Bluefin 纯净系统（Nvidia + 原生 Chrome/Firefox/VS Code/WezTerm/Clash/OpenCode + 雾凇拼音 + 纯国内源免代理初始化）
 
 base-image: ghcr.io/ublue-os/bluefin-nvidia-open
 image-version: stable
 
 modules:
-  # 1. 原生系统级安装与清理：
-  # - 从模板继承：COPR starship、micro、starship 工具；移除原生 firefox（采用 Flatpak 版）
-  # - 个人定制：微软 VS Code、Cloudflare WARP、WezTerm 官方每日构建、输入法核心（含 Qt6 与 Droid 字体）
+  # 1. 原生系统级安装：
+  # - 从模板继承：COPR starship、micro 工具
+  # - 个人定制：原生 Firefox、Google Chrome、微软 VS Code、Cloudflare WARP、WezTerm、输入法核心（含 Qt6 与 Droid 字体）
   - type: dnf
     repos:
       files:
@@ -21,6 +21,9 @@ modules:
       packages:
         - micro                        # 【来自模板】现代易用终端编辑器 Micro
         - starship                     # 【来自模板】终端提示符 Starship
+        - firefox                      # 原生 Firefox 浏览器（开机即用，免等待）
+        - firefox-langpacks            # Firefox 中文语言包
+        - https://dl.google.com/linux/chrome/rpm/stable/x86_64/google-chrome-stable_current_x86_64.rpm # 原生 Google Chrome（自动触发 BlueBuild optfix 映射）
         - code                         # 原生 VS Code
         - cloudflare-warp              # Cloudflare WARP 客户端
         - wezterm                      # WezTerm Nightly
@@ -33,10 +36,6 @@ modules:
         - fcitx5-qt                    # Qt5 模块支持
         - fcitx5-qt6                   # Qt6 模块支持
         - fcitx5-configtool            # 图形化配置面板
-    remove:
-      packages:
-        - firefox                      # 【来自模板】移除原生火狐（改用 Flatpak 容器化沙盒版）
-        - firefox-langpacks
 
   # 2. 注入标准桌面安全策略（Polkit 规则）：放入 /usr/share 符合 ostree 纯净规范
   - type: script
@@ -58,14 +57,14 @@ modules:
         EOF
         chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules
 
-  # 3. 系统级植入 Cloudflare WARP 一键启停桌面图标，并彻底消除 RPM 脚本写入 /etc 的开机自启
+  # 3. 系统级植入 Cloudflare WARP 一键启停桌面图标，并彻底消除后台服务与首次登录 GUI 自启
   - type: script
     snippets:
       - |
-        echo "==> 正在系统级植入 Cloudflare WARP 一键启动与退出桌面图标，并通过 preset 关闭自启..."
+        echo "==> 正在系统级植入 Cloudflare WARP 一键启动与退出桌面图标，并彻底关闭所有自启..."
         mkdir -p /usr/share/applications /usr/lib/systemd/system /usr/lib/systemd/system-preset /usr/lib/systemd/user-preset
 
-        # 将 cloudflare-warp RPM %posttrans 写入 /etc 的单元收归 /usr/lib，并移除开机自启软链接
+        # 1. 将 cloudflare-warp RPM %posttrans 写入 /etc 的单元收归 /usr/lib，并移除开机自启软链接
         if [ -f /etc/systemd/system/warp-svc.service ]; then
             mv -f /etc/systemd/system/warp-svc.service /usr/lib/systemd/system/warp-svc.service
         elif [ -f /opt/cloudflare-warp/warp-svc.service ]; then
@@ -73,7 +72,10 @@ modules:
         fi
         rm -f /etc/systemd/system/multi-user.target.wants/warp-svc.service
 
-        # 禁用 warp-svc、warp-taskbar 与新版 warp-desktop-svc 服务默认自启（走 /usr/lib 标准预设，不碰 /etc）
+        # 2. 彻底移除 /etc/xdg/autostart 下的全局自启项，杜绝第一次登录桌面时弹出 WARP 图形客户端
+        rm -f /etc/xdg/autostart/com.cloudflare.WarpTaskbar.desktop /etc/xdg/autostart/warp-taskbar.desktop
+
+        # 3. 禁用 warp-svc、warp-taskbar 与 warp-desktop-svc 服务默认自启（走 /usr/lib 标准预设）
         echo "disable warp-svc.service" > /usr/lib/systemd/system-preset/50-warp.preset
         cat << 'EOF' > /usr/lib/systemd/user-preset/50-warp.preset
         disable warp-taskbar.service
@@ -106,7 +108,7 @@ modules:
         Keywords=warp;cloudflare;stop;exit;quit;
         EOF
 
-  # 4. 动态抓取 GitHub 最新版 Clash Verge 原生打入系统
+  # 4. 动态抓取 GitHub 最新版 Clash Verge 与 OpenCode V2 原生打入系统（利用云端海外千兆网络构建）
   - type: script
     snippets:
       - |
@@ -124,6 +126,20 @@ modules:
         echo "==> 检测到最新版本 [${VER}]，开始通过 dnf 安装: ${CLASH_RPM}"
         dnf install -y "${CLASH_RPM}"
         dnf clean all
+
+        echo "==> 正在从 anomalyco/homebrew-tap 解析并预装最新版 OpenCode V2 至 /usr/bin/opencode..."
+        OPENCODE_URL=$(curl -sfSL https://raw.githubusercontent.com/anomalyco/homebrew-tap/main/opencode-v2.rb | grep -Eo 'https://[^"]+opencode-linux-x64[^"]+\.tar\.gz' | head -n 1)
+        if [ -n "${OPENCODE_URL}" ]; then
+            echo "==> 下载 OpenCode V2: ${OPENCODE_URL}"
+            curl -sfSL "${OPENCODE_URL}" -o /tmp/opencode.tar.gz
+            tar -xzf /tmp/opencode.tar.gz -C /usr/bin opencode
+            chmod 755 /usr/bin/opencode
+            rm -f /tmp/opencode.tar.gz
+            echo "==> OpenCode V2 已成功打入 /usr/bin/opencode！"
+        else
+            echo "==> 警告: 未能解析到 OpenCode V2 下载地址"
+            exit 1
+        fi
 
   # 5. 固化现代 Wayland 输入法方案（纯 /usr 规范架构：内置雾凇拼音 + Kimpanel 官方扩展 + GSettings 厂商覆盖）
   - type: script
@@ -311,7 +327,7 @@ modules:
         ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.service /usr/lib/systemd/system/multi-user.target.wants/flatpak-ustc-mirror.service
         echo "enable flatpak-ustc-mirror.service" > /usr/lib/systemd/system-preset/50-flatpak-mirror.preset
 
-  # 7. 必备 Flatpak 软件（融合官方模板 + 个人专属清单 + 中科大镜像源）
+  # 7. 必备 Flatpak 软件（100% 纯中科大镜像源托管软件，零境外 extra-data 阻塞）
   - type: default-flatpaks
     configurations:
       - scope: system
@@ -319,18 +335,16 @@ modules:
         repo-name: flathub
         repo-url: https://mirrors.ustc.edu.cn/flathub    # Base URL，杜绝 /summary 404
         install:
-          - org.mozilla.firefox                 # 【来自模板】火狐浏览器
           - org.gnome.Loupe                     # 【来自模板】现代图片查看器 Loupe
-          - com.google.Chrome                   # 谷歌浏览器
-          - org.onlyoffice.desktopeditors       # ONLYOFFICE 办公套件
           - org.localsend.localsend_app         # LocalSend 局域网传输
-          - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
           - org.gnome.Boxes                     # GNOME Boxes 虚拟机
+          - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
+          - org.onlyoffice.desktopeditors       # ONLYOFFICE 办公套件
       - scope: user
         repo-name: flathub
         repo-url: https://mirrors.ustc.edu.cn/flathub
 
-  # 8. 首次登录全自动装配（Homebrew 镜像 + WezTerm 霓虹赛博配置 + 纯 /usr 钩子）
+  # 8. 首次登录全自动装配（纯清华源 Homebrew + WezTerm 霓虹赛博配置 + 纯 /usr 钩子）
   - type: script
     snippets:
       - |
@@ -343,7 +357,7 @@ modules:
         KillMode=process
         EOF
 
-        # 1. 全局配置 Homebrew 环境变量与清华大学镜像源（放入 /usr/lib/environment.d）
+        # 1. 全局配置 Homebrew 环境变量与清华大学镜像源（放入 /usr/lib/environment.d，禁止自动连 GitHub 检查更新）
         mkdir -p /usr/lib/environment.d
         cat << 'EOF' > /usr/lib/environment.d/00-linuxbrew.conf
         HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew
@@ -351,12 +365,12 @@ modules:
         HOMEBREW_REPOSITORY=/home/linuxbrew/.linuxbrew/Homebrew
         HOMEBREW_API_DOMAIN=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api
         HOMEBREW_BOTTLE_DOMAIN=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles
+        HOMEBREW_NO_AUTO_UPDATE=1
         EOF
 
-        # 2. 将个人定制 Brewfile 写入系统共享目录（纯 CLI 工具链）
+        # 2. 将个人定制 Brewfile 写入系统共享目录（100% 官方核心 Bottle 包，全走清华源极速秒装）
         mkdir -p /usr/share/ublue-os/my-brew
         cat << 'EOF' > /usr/share/ublue-os/my-brew/Brewfile
-        tap "anomalyco/tap"
         brew "node"
         brew "pnpm"
         brew "python"
@@ -365,16 +379,10 @@ modules:
         brew "jq"
         brew "zstd"
         brew "openssl"
-        brew "anomalyco/tap/opencode-v2"
         brew "merve"
         EOF
 
-        # 3. 在构建阶段预拉取第三方 Tap (anomalyco/tap) 固化至出厂资产，免除开机时对 GitHub 的网络请求
-        echo "==> 正在构建期预拉取 anomalyco/tap 固化至出厂资产..."
-        mkdir -p /usr/share/ublue-os/taps/anomalyco
-        git clone --depth 1 https://github.com/anomalyco/homebrew-tap.git /usr/share/ublue-os/taps/anomalyco/homebrew-tap
-
-        # 4. 将个人定制 WezTerm 终端配置写入系统共享目录（纯 /usr/share 纯净方案）
+        # 3. 将个人定制 WezTerm 终端配置写入系统共享目录（纯 /usr/share 纯净方案）
         cat << 'EOF' > /usr/share/ublue-os/my-brew/wezterm.lua
         local wezterm = require("wezterm")
         local config = {}
@@ -666,7 +674,7 @@ modules:
         return config
         EOF
 
-        # 5. 注入 Bluefin 官方首登执行脚本（从 /usr/share 优雅下发至用户主目录）
+        # 4. 注入 Bluefin 官方首登执行脚本（从 /usr/share 优雅下发至用户主目录）
         mkdir -p /usr/share/ublue-os/user-setup.hooks.d
         cat << 'EOF' > /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
         #!/usr/bin/env bash
@@ -739,6 +747,7 @@ modules:
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null)"
         export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
         export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+        export HOMEBREW_NO_AUTO_UPDATE=1
         BREWENV
         fi
 
@@ -748,7 +757,7 @@ modules:
 
         BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
 
-        # 异步在后台运行，并将日志输出到用户隔离目录（配合 10-keep-background.conf 杜绝被 systemd 回收杀死）
+        # 异步在后台运行（配合 10-keep-background.conf 杜绝被 systemd 回收杀死）
         (
             # 使用内存级 runtime 目录排他锁，关机或崩溃内核自动释放，绝不死锁
             LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/simon-brew.lock"
@@ -756,6 +765,9 @@ modules:
             if ! flock -n 200; then
                 exit 0
             fi
+
+            # 抢锁成功后再重定向日志，杜绝二次登录时截断正在写入的日志文件
+            exec >>"$HOME/.local/state/brew-setup.log" 2>&1
 
             # 初次启动触发 Rime 词库编译部署（设置 3 秒超时限制，防止 D-Bus 暂未就绪阻塞）
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在触发 Rime 词库重新部署与编译..."
@@ -782,21 +794,11 @@ modules:
                 net_count=$((net_count + 1))
             done
 
-            # 加载环境变量与国内清华 Bottle 镜像（解决 ghcr.io 连接被重置问题）
+            # 加载环境变量与国内清华 Bottle 镜像（禁止自动连 GitHub 更新）
             eval "$("${BREW_BIN}" shellenv)"
             export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
             export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
-
-            # 若系统预置了出厂 anomalyco/tap，则直接同步至 Homebrew 目录，免除对 GitHub 的网络请求
-            if [ -d /usr/share/ublue-os/taps/anomalyco/homebrew-tap ]; then
-                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在导入出厂预置的 anomalyco/tap..."
-                mkdir -p /var/home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/anomalyco
-                cp -rn /usr/share/ublue-os/taps/anomalyco/homebrew-tap /var/home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/anomalyco/ 2>/dev/null || true
-            fi
-
-            # 信任 Tap 授权，彻底避免 bundle 因 untrusted tap 拒绝安装
-            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在信任 Tap 授权..."
-            "${BREW_BIN}" trust anomalyco/tap 2>/dev/null || true
+            export HOMEBREW_NO_AUTO_UPDATE=1
 
             # 执行安装并通知桌面
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 开始执行 brew bundle 批量安装..."
@@ -805,7 +807,7 @@ modules:
                 echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] Homebrew 所有依赖安装成功！"
                 which notify-send >/dev/null 2>&1 && notify-send "系统初始化通知" "个人 Homebrew 开发工具已全自动安装完成！" -i package-x-generic
             fi
-        ) >"$HOME/.local/state/brew-setup.log" 2>&1 &
+        ) &
         EOF
 
         chmod +x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
