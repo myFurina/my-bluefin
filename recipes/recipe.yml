@@ -327,15 +327,23 @@ modules:
             cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
         fi
 
-        # 确保 WezTerm 终端配置自动下发至用户主目录
+        # 确保 WezTerm 终端配置自动下发至用户主目录（优先读取 /usr/etc/skel 出厂模板）
         mkdir -p "$HOME/.config/wezterm"
-        if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /etc/skel/.config/wezterm/wezterm.lua ]; then
-            cp /etc/skel/.config/wezterm/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
+        if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ]; then
+            if [ -f /usr/etc/skel/.config/wezterm/wezterm.lua ]; then
+                cp /usr/etc/skel/.config/wezterm/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
+            elif [ -f /etc/skel/.config/wezterm/wezterm.lua ]; then
+                cp /etc/skel/.config/wezterm/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
+            fi
         fi
 
         # 确保 GTK2 配置文件自动下发至用户主目录
-        if [ ! -f "$HOME/.gtkrc-2.0" ] && [ -f /etc/skel/.gtkrc-2.0 ]; then
-            cp /etc/skel/.gtkrc-2.0 "$HOME/.gtkrc-2.0"
+        if [ ! -f "$HOME/.gtkrc-2.0" ]; then
+            if [ -f /usr/etc/skel/.gtkrc-2.0 ]; then
+                cp /usr/etc/skel/.gtkrc-2.0 "$HOME/.gtkrc-2.0"
+            elif [ -f /etc/skel/.gtkrc-2.0 ]; then
+                cp /etc/skel/.gtkrc-2.0 "$HOME/.gtkrc-2.0"
+            fi
         fi
 
         # 确保系统级预置的 Kimpanel 扩展自动激活
@@ -398,5 +406,16 @@ modules:
 
         chmod +x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
 
-  # 10. 容器镜像加密数字签名（必选）
+  # 10. 规范化 OSTree 目录树（将 /etc 变更合并同步至 /usr/etc，并清理顶层 /etc，杜绝 Tree contains both 错误）
+  - type: script
+    snippets:
+      - |
+        echo "==> 正在规范化 OSTree 目录树（消除 /etc 与 /usr/etc 冲突）..."
+        if [ -d /usr/etc ]; then
+            echo "==> 检测到 /usr/etc，正在合并 /etc 出厂配置并清理冲突..."
+            cp -rT /etc /usr/etc 2>/dev/null || cp -rn /etc/* /usr/etc/ 2>/dev/null || true
+            find /etc -mindepth 1 ! -name "hosts" ! -name "resolv.conf" ! -name "hostname" -delete 2>/dev/null || true
+        fi
+
+  # 11. 容器镜像加密数字签名（必选）
   - type: signing
