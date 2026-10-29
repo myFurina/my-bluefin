@@ -29,7 +29,6 @@ modules:
         - fcitx5-chinese-addons        # 必备：中文拼音、双拼、云拼音支持
         - fcitx5-rime                  # 必备：Rime 引擎
         - librime-lua                  # 必备：Rime Lua 插件（激活雾凇拼音 rq/sj 动态日期时间脚本）
-        - gnome-shell-extension-kimpanel # 必备：Fedora 官方原生 Kimpanel 顶栏扩展
         - fcitx5-gtk                   # GTK 模块支持
         - fcitx5-qt                    # Qt5 模块支持
         - fcitx5-qt6                   # Qt6 模块支持
@@ -159,8 +158,7 @@ modules:
         EOF
         glib-compile-schemas /usr/share/glib-2.0/schemas/
 
-        # 4. Kimpanel 顶栏扩展已由 Fedora 官方 RPM (gnome-shell-extension-kimpanel) 规范装入系统
-        echo "==> Kimpanel 扩展已由系统 RPM 原生安装在 /usr/share/gnome-shell/extensions/kimpanel@kde.org"
+        # 4. Fcitx5 顶栏托盘与候选框通过 Wayland / AppIndicator 原生集成，无需第三方扩展
 
         # 5. 系统级预置【雾凇拼音（Rime-ICE）】与出厂配置模板至 /usr/share/ublue-os
         echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
@@ -690,8 +688,8 @@ modules:
 
             # 显式先拉取第三方 Tap，再信任授权，彻底避免 bundle 因 untrusted tap 拒绝安装
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在拉取 Tap 并信任授权..."
-            "${BREW_BIN}" tap anomalyco/tap
-            "${BREW_BIN}" trust anomalyco/tap
+            "${BREW_BIN}" tap anomalyco/tap 2>/dev/null || true
+            "${BREW_BIN}" trust anomalyco/tap 2>/dev/null || true
 
             # 执行安装并通知桌面
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 开始执行 brew bundle 批量安装..."
