@@ -156,6 +156,9 @@ modules:
 
         [org.gnome.settings-daemon.plugins.xsettings]
         overrides={'Gtk/IMModule': <'fcitx'>}
+
+        [org.gnome.shell]
+        disable-extension-version-validation=true
         EOF
         glib-compile-schemas /usr/share/glib-2.0/schemas/
 
@@ -269,32 +272,35 @@ modules:
         XMODIFIERS=@im=fcitx
         EOF
 
-        # 3. 创建系统级 Flatpak 前置自愈服务：在自动下载前强制将 Flathub 锁定为交大高速镜像
-        mkdir -p /usr/lib/systemd/system /usr/lib/systemd/system-preset
-        cat << 'EOF' > /usr/lib/systemd/system/flatpak-sjtu-mirror.service
+        # 3. 创建系统级 Flatpak 前置自愈服务：在自动下载前强制将 Flathub 锁定为中科大高速镜像
+        mkdir -p /usr/lib/systemd/system /usr/lib/systemd/system-preset /usr/lib/systemd/system/multi-user.target.wants /usr/share/ublue-os
+        curl -sSL https://dl.flathub.org/repo/flathub.gpg -o /usr/share/ublue-os/flathub.gpg 2>/dev/null || true
+
+        cat << 'EOF' > /usr/lib/systemd/system/flatpak-ustc-mirror.service
         [Unit]
-        Description=Configure System Flatpak SJTU Mirror
+        Description=Configure System Flatpak USTC Mirror
         Before=system-flatpak-setup.service
         After=network.target
 
         [Service]
         Type=oneshot
-        ExecStart=/bin/sh -c '/usr/bin/flatpak remote-modify --system flathub --url=https://mirror.sjtu.edu.cn/flathub 2>/dev/null || true'
+        ExecStart=/bin/sh -c '/usr/bin/flatpak remote-modify --system flathub --url=https://mirrors.ustc.edu.cn/flathub 2>/dev/null || true'
         RemainAfterExit=yes
 
         [Install]
         WantedBy=multi-user.target
         EOF
 
-        echo "enable flatpak-sjtu-mirror.service" > /usr/lib/systemd/system-preset/50-flatpak-mirror.preset
+        ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.service /usr/lib/systemd/system/multi-user.target.wants/flatpak-ustc-mirror.service
+        echo "enable flatpak-ustc-mirror.service" > /usr/lib/systemd/system-preset/50-flatpak-mirror.preset
 
-  # 7. 必备 Flatpak 软件（融合官方模板 + 个人专属清单 + 交大镜像源）
+  # 7. 必备 Flatpak 软件（融合官方模板 + 个人专属清单 + 中科大镜像源）
   - type: default-flatpaks
     configurations:
       - scope: system
         notify: true
         repo-name: flathub
-        repo-url: https://mirror.sjtu.edu.cn/flathub    # Base URL，杜绝 /summary 404
+        repo-url: https://mirrors.ustc.edu.cn/flathub    # Base URL，杜绝 /summary 404
         install:
           - org.mozilla.firefox                 # 【来自模板】火狐浏览器
           - org.gnome.Loupe                     # 【来自模板】现代图片查看器 Loupe
@@ -305,7 +311,7 @@ modules:
           - org.gnome.Boxes                     # GNOME Boxes 虚拟机
       - scope: user
         repo-name: flathub
-        repo-url: https://mirror.sjtu.edu.cn/flathub
+        repo-url: https://mirrors.ustc.edu.cn/flathub
 
   # 8. 首次登录全自动装配（Homebrew 镜像 + WezTerm 霓虹赛博配置 + 纯 /usr 钩子）
   - type: script
@@ -684,7 +690,8 @@ modules:
         which systemctl >/dev/null 2>&1 && systemctl --user disable --now warp-taskbar 2>/dev/null || true
         which systemctl >/dev/null 2>&1 && systemctl --user mask warp-taskbar 2>/dev/null || true
 
-        # 确保系统级预置的 Kimpanel 扩展自动同步至用户目录并激活
+        # 确保解除 GNOME Shell 扩展版本限制并激活 Kimpanel
+        which gsettings >/dev/null 2>&1 && gsettings set org.gnome.shell disable-extension-version-validation true 2>/dev/null || true
         if [ -d /usr/share/gnome-shell/extensions/kimpanel@kde.org ]; then
             mkdir -p "$HOME/.local/share/gnome-shell/extensions/kimpanel@kde.org"
             cp -rn /usr/share/gnome-shell/extensions/kimpanel@kde.org/* "$HOME/.local/share/gnome-shell/extensions/kimpanel@kde.org/" 2>/dev/null || true
@@ -692,9 +699,10 @@ modules:
         fi
         which gnome-extensions >/dev/null 2>&1 && gnome-extensions enable kimpanel@kde.org 2>/dev/null || true
 
-        # 同步锁定用户级（--user）Flatpak 镜像为上海交大源（采用 Base URL）
-        flatpak remote-add --user --if-not-exists flathub https://mirror.sjtu.edu.cn/flathub 2>/dev/null || true
-        flatpak remote-modify --user flathub --url=https://mirror.sjtu.edu.cn/flathub 2>/dev/null || true
+        # 同步锁定用户级（--user）Flatpak 镜像为中科大源（导入 GPG 公钥，杜绝 public key not found）
+        flatpak remote-modify --user --gpg-import=/usr/share/ublue-os/flathub.gpg flathub 2>/dev/null || flatpak remote-modify --user --gpg-import=/etc/flatpak/remotes.d/flathub.gpg flathub 2>/dev/null || true
+        flatpak remote-add --user --if-not-exists flathub https://mirrors.ustc.edu.cn/flathub 2>/dev/null || true
+        flatpak remote-modify --user flathub --url=https://mirrors.ustc.edu.cn/flathub 2>/dev/null || true
 
         # 确保 ~/.bashrc 中包含 Homebrew 环境变量
         if ! grep -q "linuxbrew" "$HOME/.bashrc" 2>/dev/null; then
@@ -720,9 +728,9 @@ modules:
                 exit 0
             fi
 
-            # 初次启动触发 Rime 词库编译部署（确保雾凇词库立即可用）
+            # 初次启动触发 Rime 词库编译部署（设置 3 秒超时限制，防止 D-Bus 暂未就绪阻塞）
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在触发 Rime 词库重新部署与编译..."
-            which fcitx5-remote >/dev/null 2>&1 && fcitx5-remote -r 2>/dev/null || true
+            which fcitx5-remote >/dev/null 2>&1 && timeout 3s fcitx5-remote -r 2>/dev/null || true
 
             # 等待 Bluefin 自带解压 Homebrew 完成（最多等 120 秒）
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在检查 Homebrew 核心程序 (${BREW_BIN})..."
