@@ -1,50 +1,46 @@
 # yaml-language-server: $schema=https://schema.blue-build.org/recipe-v1.json
 name: my-bluefin
-description: 个人的全自动 Bluefin 纯净系统（Nvidia + VS Code + WezTerm + Boxes + LocalSend 字体 + 现代输入法）
+description: 个人的全自动 Bluefin 纯净系统（Nvidia + Starship/Micro + VS Code + WezTerm + Boxes + LocalSend 字体 + 现代输入法）
 
-# 1. 硬件底座：
-# 说明：若换到 Intel/AMD 核显或纯 A 卡设备，请将此处改为 ghcr.io/ublue-os/bluefin
-# 若换到 GTX 1060 等 Pascal 架构老卡，请改为 ghcr.io/ublue-os/bluefin-nvidia
-# 当前：RTX 20/30/40 等新显卡推荐使用 nvidia-open（原生自带 Tailscale 核心组件）
 base-image: ghcr.io/ublue-os/bluefin-nvidia-open
 image-version: stable
 
 modules:
-  # 1. 原生系统级安装：VS Code、Cloudflare WARP、输入法核心（含 Qt6 与 Droid 字体）
-  # 【排查步骤 3】：临时注释 wezterm-nightly 与 wezterm，排查 /usr/etc 冲突来源
+  # 1. 原生系统级安装与清理：
+  # - 从模板继承：COPR starship、micro、starship 工具；移除原生 firefox（采用 Flatpak 版）
+  # - 个人定制：微软 VS Code、Cloudflare WARP、WezTerm 官方每日构建、输入法核心（含 Qt6 与 Droid 字体）
   - type: dnf
     repos:
       files:
         - https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo
         - https://packages.microsoft.com/yumrepos/vscode/config.repo  # 微软 VS Code 官方源
-      # copr:
-      #   - wezfurlong/wezterm-nightly   # WezTerm 每日构建源
+      copr:
+        - atim/starship                # 【来自模板】现代终端提示符 Starship
+        - wezfurlong/wezterm-nightly   # WezTerm 每日构建源
     install:
       packages:
-        - code                         # 原生 VS Code（自带官方原生图标、右键菜单与 URL 协议）
+        - micro                        # 【来自模板】现代易用终端编辑器 Micro
+        - starship                     # 【来自模板】终端提示符 Starship
+        - code                         # 原生 VS Code
         - cloudflare-warp              # Cloudflare WARP 客户端
-        # - wezterm                      # WezTerm Nightly（自带官方图标）
-        - google-droid-sans-fonts      # 【精准补全】提供 LocalSend 修复必需的 DroidSansFallbackFull.ttf
+        - wezterm                      # WezTerm Nightly
+        - google-droid-sans-fonts      # 提供 LocalSend 必需的 DroidSansFallbackFull.ttf
         - fcitx5
         - fcitx5-chinese-addons        # 必备：中文拼音、双拼、云拼音支持
         - fcitx5-rime                  # 必备：Rime 引擎
         - fcitx5-gtk                   # GTK 模块支持
         - fcitx5-qt                    # Qt5 模块支持
-        - fcitx5-qt6                   # 【精准补全】Qt6 模块支持，确保现代 Qt6 应用输入无障碍
+        - fcitx5-qt6                   # Qt6 模块支持
         - fcitx5-configtool            # 图形化配置面板
+    remove:
+      packages:
+        - firefox                      # 【来自模板】移除原生火狐（改用 Flatpak 容器化沙盒版）
+        - firefox-langpacks
 
-  # 2. 注入标准桌面安全策略（Polkit 规则）：放入 /usr/share 符合 ostree 最佳规范
+  # 2. 注入标准桌面安全策略（Polkit 规则）：放入 /usr/share 符合 ostree 纯净规范
   - type: script
     snippets:
       - |
-        echo "==> [DIAGNOSTIC] 检查 DNF 安装后是否存在 /usr/etc..."
-        if [ -d /usr/etc ]; then
-            echo "==> [DIAGNOSTIC] 警告: 检测到 /usr/etc 存在！文件列表："
-            find /usr/etc
-        else
-            echo "==> [DIAGNOSTIC] DNF 阶段后未发现 /usr/etc。"
-        fi
-
         echo "==> 正在配置 WARP 服务的桌面 Polkit 安全提权策略..."
         mkdir -p /usr/share/polkit-1/rules.d
         cat << 'EOF' > /usr/share/polkit-1/rules.d/50-warp-service.rules
@@ -61,666 +57,672 @@ modules:
         EOF
         chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules
 
-  #   # 4. 系统级植入 Cloudflare WARP 一键启停桌面图标，并彻底禁用其开机自启动
-  #   - type: script
-  #     snippets:
-  #       - |
-  #         echo "==> 正在系统级植入 Cloudflare WARP 一键启动与退出桌面图标，并关闭开机自启..."
-  #         mkdir -p /usr/share/applications
-# 
-  #         # 1. 禁用 warp-svc 系统后台服务自启（注入 preset 与显式 disable）
-  #         mkdir -p /usr/lib/systemd/system-preset
-  #         echo "disable warp-svc.service" > /usr/lib/systemd/system-preset/50-warp.preset
-  #         systemctl disable warp-svc.service 2>/dev/null || true
-# 
-  #         # 2. 禁用桌面托盘/客户端登录自动唤醒
-  #         rm -f /etc/xdg/autostart/*warp* /etc/xdg/autostart/*cloudflare*
-# 
-  #         # 3. 启动图标（走 Polkit 授权，无需 sudo）
-  #         cat << 'EOF' > /usr/share/applications/cf-start.desktop
-  #         [Desktop Entry]
-  #         Type=Application
-  #         Name=启动 Cloudflare WARP
-  #         Comment=一键启动 Cloudflare WARP 服务及客户端
-  #         Exec=sh -c "systemctl start warp-svc; nohup warp-taskbar >/dev/null 2>&1 & notify-send 'Cloudflare WARP' '后台服务与客户端已启动'"
-  #         Icon=zero-trust-orange
-  #         Terminal=false
-  #         Categories=Network;
-  #         Keywords=warp;cloudflare;start;
-  #         EOF
-# 
-  #         # 4. 退出图标（改用 pkill 确保系统绝对自带，平滑关闭）
-  #         cat << 'EOF' > /usr/share/applications/cf-quit.desktop
-  #         [Desktop Entry]
-  #         Type=Application
-  #         Name=退出 Cloudflare WARP
-  #         Comment=一键彻底关闭 Cloudflare WARP 客户端及后台服务
-  #         Exec=sh -c "pkill -f warp-taskbar 2>/dev/null; pkill -f warp-desktop-svc 2>/dev/null; systemctl stop warp-svc; notify-send 'Cloudflare WARP' '已彻底退出并停止服务'"
-  #         Icon=application-exit
-  #         Terminal=false
-  #         Categories=Network;
-  #         Keywords=warp;cloudflare;stop;exit;quit;
-  #         EOF
-# 
-  # 4. 【排查步骤 3】：临时注释 Clash Verge 安装，排查 /usr/etc 冲突来源
-  # - type: script
-  #   snippets:
-  #     - |
-  #       echo "==> 正在精准解析 GitHub 最新版 Clash Verge..."
-  #       FINAL_URL=$(curl -sfSL -o /dev/null -w '%{url_effective}' https://github.com/clash-verge-rev/clash-verge-rev/releases/latest)
-  #       TAG="${FINAL_URL##*/}"
-  #       VER="${TAG#v}"
-  #
-  #       if [ -z "${FINAL_URL}" ] || [ "${TAG}" = "latest" ] || [ -z "${VER}" ]; then
-  #           echo "==> 错误: 无法解析 Clash Verge 最新发布版本，请检查网络或 GitHub 状态。"
-  #           exit 1
-  #       fi
-  #
-  #       CLASH_RPM="https://github.com/clash-verge-rev/clash-verge-rev/releases/download/${TAG}/Clash.Verge-${VER}-1.x86_64.rpm"
-  #       echo "==> 检测到最新版本 [${VER}]，开始通过 dnf 安装: ${CLASH_RPM}"
-  #       dnf install -y "${CLASH_RPM}"
-  #       dnf clean all
+  # 3. 系统级植入 Cloudflare WARP 一键启停桌面图标，并通过 preset 关闭自启
+  - type: script
+    snippets:
+      - |
+        echo "==> 正在系统级植入 Cloudflare WARP 一键启动与退出桌面图标，并通过 preset 关闭自启..."
+        mkdir -p /usr/share/applications
 
-  #   # 6. 固化现代 Wayland 输入法方案（极简纯净版：内置雾凇拼音 + Kimpanel 官方扩展 + 专属 GTK 兼容）
-  #   - type: script
-  #     snippets:
-  #       - |
-  #         echo "==> 正在系统级配置 Fcitx5、雾凇拼音与 GNOME 响应通道..."
-# 
-  #         # 1. 注入 Fcitx5 基础环境变量（仅配置 XMODIFIERS 与 QT_IM_MODULE）
-  #         mkdir -p /etc/environment.d
-  #         cat << 'EOF' > /etc/environment.d/99-input-method.conf
-  #         XMODIFIERS=@im=fcitx
-  #         QT_IM_MODULE=fcitx
-  #         EOF
-# 
-  #         # 2. 全局 systemd 用户服务：Fcitx5 进程守护
-  #         mkdir -p /usr/lib/systemd/user/graphical-session.target.wants
-  #         cat << 'EOF' > /usr/lib/systemd/user/fcitx5.service
-  #         [Unit]
-  #         Description=Fcitx5 Input Method Framework
-  #         PartOf=graphical-session.target
-  #         After=graphical-session.target
-# 
-  #         [Service]
-  #         Type=simple
-  #         ExecStart=/usr/bin/fcitx5 --replace
-  #         Restart=always
-  #         RestartSec=2
-  #         TimeoutStopSec=5
-# 
-  #         [Install]
-  #         WantedBy=graphical-session.target
-  #         EOF
-  #         ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/graphical-session.target.wants/fcitx5.service
-# 
-  #         # 3. GNOME 全局默认配置：静音 IBus 并设置 GNOME xsettings 对接 Fcitx
-  #         mkdir -p /etc/dconf/profile
-  #         cat << 'EOF' > /etc/dconf/profile/user
-  #         user-db:user
-  #         system-db:local
-  #         EOF
-# 
-  #         mkdir -p /etc/dconf/db/local.d
-  #         cat << 'EOF' > /etc/dconf/db/local.d/01-input-sources
-  #         [org/gnome/desktop/input-sources]
-  #         sources=[('xkb', 'us')]
-# 
-  #         [org/gnome/settings-daemon/plugins/xsettings]
-  #         overrides={'Gtk/IMModule': <'fcitx'>}
-  #         EOF
-  #         dconf update
-# 
-  #         # 4. 从 GNOME 官方扩展中心动态获取匹配当前 GNOME 版本的最新 Kimpanel 发行包
-  #         echo "==> 正在获取 GNOME 官方最新版 Kimpanel..."
-  #         SHELL_VER=$(gnome-shell --version | awk '{print $3}' | cut -d'.' -f1)
-  #         DOWNLOAD_URL=$(curl -s "https://extensions.gnome.org/extension-info/?uuid=kimpanel@kde.org&shell_version=${SHELL_VER}" | grep -o '"download_url": *"[^"]*"' | cut -d'"' -f4)
-# 
-  #         if [ -n "$DOWNLOAD_URL" ]; then
-  #             mkdir -p /usr/share/gnome-shell/extensions/kimpanel@kde.org
-  #             curl -sSL "https://extensions.gnome.org${DOWNLOAD_URL}" -o /tmp/kimpanel.zip
-  #             unzip -qo /tmp/kimpanel.zip -d /usr/share/gnome-shell/extensions/kimpanel@kde.org/
-  #             rm -f /tmp/kimpanel.zip
-  #             glib-compile-schemas /usr/share/gnome-shell/extensions/kimpanel@kde.org/schemas/ 2>/dev/null || true
-  #         else
-  #             echo "==> 警告: 未能从 GNOME Extensions API 解析到 Kimpanel 下载链接"
-  #         fi
-# 
-  #         # 5. 系统级打包注入【雾凇拼音（Rime-ICE）】官方词库
-  #         echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
-  #         mkdir -p /etc/skel/.local/share/fcitx5/rime
-  #         git clone --depth 1 https://github.com/iDvel/rime-ice.git /tmp/rime-ice
-  #         cp -r /tmp/rime-ice/* /etc/skel/.local/share/fcitx5/rime/
-  #         rm -rf /tmp/rime-ice
-# 
-  #         # 6. 预置系统新用户默认输入法配置（默认激活 Rime 雾凇）
-  #         mkdir -p /etc/skel/.config/fcitx5
-  #         cat << 'EOF' > /etc/skel/.config/fcitx5/profile
-  #         [Groups/0]
-  #         Name=Default
-  #         Default Layout=us
-  #         DefaultIM=rime
-# 
-  #         [Groups/0/Items/0]
-  #         Name=keyboard-us
-  #         Layout=
-# 
-  #         [Groups/0/Items/1]
-  #         Name=rime
-  #         Layout=
-# 
-  #         [GroupOrder]
-  #         0=Default
-  #         EOF
-# 
-  #         # 7. 预置 GTK2 与 GTK3 专属兼容配置（严格遵循极简实践：不配置 GTK4）
-  #         cat << 'EOF' > /etc/skel/.gtkrc-2.0
-  #         gtk-im-module="fcitx"
-  #         EOF
-# 
-  #         mkdir -p /etc/skel/.config/gtk-3.0
-  #         cat << 'EOF' > /etc/skel/.config/gtk-3.0/settings.ini
-  #         [Settings]
-  #         gtk-im-module=fcitx
-  #         EOF
-# 
-  #         # 8. 全局开启 Tailscale 后台守护服务并配置桌面托盘
-  #         systemctl enable tailscaled.service
-  #         cat << 'EOF' > /usr/lib/systemd/user/tailscale-systray.service
-  #         [Unit]
-  #         Description=Tailscale System Tray
-  #         Documentation=https://tailscale.com/kb/1597/linux-systray
-  #         Requires=dbus.service
-  #         After=dbus.service graphical-session.target
-  #         PartOf=graphical-session.target
-# 
-  #         [Service]
-  #         Type=simple
-  #         ExecStart=/usr/bin/tailscale systray
-  #         Restart=on-failure
-  #         RestartSec=5
-# 
-  #         [Install]
-  #         WantedBy=graphical-session.target
-  #         EOF
-  #         ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
-# 
-  #   # 7. 全局配置 Flatpak 沙盒覆盖规则（彻底修复 LocalSend 字体豆腐块 + 全局 Flatpak 中文输入）
-  #   - type: script
-  #     snippets:
-  #       - |
-  #         echo "==> 正在全局注入 Flatpak 权限覆盖规则与字体模版..."
-  #         mkdir -p /etc/flatpak/overrides
-# 
-  #         # 1. 修复 LocalSend 中文字体：双重放行字体文件与字体配置
-  #         cat << 'EOF' > /etc/flatpak/overrides/org.localsend.localsend_app
-  #         [Context]
-  #         filesystems=xdg-data/fonts:ro;xdg-config/fontconfig:ro;
-  #         EOF
-# 
-  #         # 2. 全局 Flatpak 输入法放行：放行 Fcitx5 配置，让所有 Flatpak 能正常打中文
-  #         cat << 'EOF' > /etc/flatpak/overrides/global
-  #         [Context]
-  #         filesystems=xdg-config/fcitx5:ro;
-# 
-  #         [Environment]
-  #         XMODIFIERS=@im=fcitx
-  #         EOF
-# 
-  #         # 3. 在系统新用户模板中预置 DroidSansFallbackFull 中文字体
-  #         mkdir -p /etc/skel/.local/share/fonts
-  #         if [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
-  #             cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf /etc/skel/.local/share/fonts/
-  #         fi
-# 
-  # 8. 个人必备 Flatpak 软件（配置交大 Base URL，避免 404 summary 报错）
+        # 禁用 warp-svc 服务默认开机自启（走 /usr/lib 标准预设，不碰 /etc）
+        mkdir -p /usr/lib/systemd/system-preset
+        echo "disable warp-svc.service" > /usr/lib/systemd/system-preset/50-warp.preset
+
+        # 启动图标（走 Polkit 授权，无需 sudo）
+        cat << 'EOF' > /usr/share/applications/cf-start.desktop
+        [Desktop Entry]
+        Type=Application
+        Name=启动 Cloudflare WARP
+        Comment=一键启动 Cloudflare WARP 服务及客户端
+        Exec=sh -c "systemctl start warp-svc; nohup warp-taskbar >/dev/null 2>&1 & notify-send 'Cloudflare WARP' '后台服务与客户端已启动'"
+        Icon=zero-trust-orange
+        Terminal=false
+        Categories=Network;
+        Keywords=warp;cloudflare;start;
+        EOF
+
+        # 退出图标（平滑关闭）
+        cat << 'EOF' > /usr/share/applications/cf-quit.desktop
+        [Desktop Entry]
+        Type=Application
+        Name=退出 Cloudflare WARP
+        Comment=一键彻底关闭 Cloudflare WARP 客户端及后台服务
+        Exec=sh -c "pkill -f warp-taskbar 2>/dev/null; pkill -f warp-desktop-svc 2>/dev/null; systemctl stop warp-svc; notify-send 'Cloudflare WARP' '已彻底退出并停止服务'"
+        Icon=application-exit
+        Terminal=false
+        Categories=Network;
+        Keywords=warp;cloudflare;stop;exit;quit;
+        EOF
+
+  # 4. 动态抓取 GitHub 最新版 Clash Verge 原生打入系统
+  - type: script
+    snippets:
+      - |
+        echo "==> 正在精准解析 GitHub 最新版 Clash Verge..."
+        FINAL_URL=$(curl -sfSL -o /dev/null -w '%{url_effective}' https://github.com/clash-verge-rev/clash-verge-rev/releases/latest)
+        TAG="${FINAL_URL##*/}"
+        VER="${TAG#v}"
+
+        if [ -z "${FINAL_URL}" ] || [ "${TAG}" = "latest" ] || [ -z "${VER}" ]; then
+            echo "==> 错误: 无法解析 Clash Verge 最新发布版本，请检查网络或 GitHub 状态。"
+            exit 1
+        fi
+
+        CLASH_RPM="https://github.com/clash-verge-rev/clash-verge-rev/releases/download/${TAG}/Clash.Verge-${VER}-1.x86_64.rpm"
+        echo "==> 检测到最新版本 [${VER}]，开始通过 dnf 安装: ${CLASH_RPM}"
+        dnf install -y "${CLASH_RPM}"
+        dnf clean all
+
+  # 5. 固化现代 Wayland 输入法方案（纯 /usr 规范架构：内置雾凇拼音 + Kimpanel 官方扩展 + GSettings 厂商覆盖）
+  - type: script
+    snippets:
+      - |
+        echo "==> 正在系统级配置 Fcitx5、雾凇拼音与 GNOME 响应通道（纯 /usr 架构）..."
+
+        # 1. 注入 Fcitx5 基础环境变量（走 /usr/lib/environment.d，系统与用户会话标准路径，不碰 /etc）
+        mkdir -p /usr/lib/environment.d
+        cat << 'EOF' > /usr/lib/environment.d/99-input-method.conf
+        XMODIFIERS=@im=fcitx
+        QT_IM_MODULE=fcitx
+        EOF
+
+        # 2. 全局 systemd 用户服务：Fcitx5 进程守护
+        mkdir -p /usr/lib/systemd/user/graphical-session.target.wants
+        cat << 'EOF' > /usr/lib/systemd/user/fcitx5.service
+        [Unit]
+        Description=Fcitx5 Input Method Framework
+        PartOf=graphical-session.target
+        After=graphical-session.target
+
+        [Service]
+        Type=simple
+        ExecStart=/usr/bin/fcitx5 --replace
+        Restart=always
+        RestartSec=2
+        TimeoutStopSec=5
+
+        [Install]
+        WantedBy=graphical-session.target
+        EOF
+        ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/graphical-session.target.wants/fcitx5.service
+
+        # 3. GNOME 全局默认配置（走 GSettings 厂商覆盖机制 /usr/share/glib-2.0/schemas，杜绝 dconf update 污染 /etc）
+        mkdir -p /usr/share/glib-2.0/schemas
+        cat << 'EOF' > /usr/share/glib-2.0/schemas/01_input_sources.gschema.override
+        [org.gnome.desktop.input-sources]
+        sources=[('xkb', 'us')]
+
+        [org.gnome.settings-daemon.plugins.xsettings]
+        overrides={'Gtk/IMModule': <'fcitx'>}
+        EOF
+        glib-compile-schemas /usr/share/glib-2.0/schemas/
+
+        # 4. 从 GNOME 官方扩展中心动态获取匹配当前 GNOME 版本的最新 Kimpanel 发行包
+        echo "==> 正在获取 GNOME 官方最新版 Kimpanel..."
+        SHELL_VER=$(gnome-shell --version | awk '{print $3}' | cut -d'.' -f1)
+        DOWNLOAD_URL=$(curl -s "https://extensions.gnome.org/extension-info/?uuid=kimpanel@kde.org&shell_version=${SHELL_VER}" | grep -o '"download_url": *"[^"]*"' | cut -d'"' -f4)
+
+        if [ -n "$DOWNLOAD_URL" ]; then
+            mkdir -p /usr/share/gnome-shell/extensions/kimpanel@kde.org
+            curl -sSL "https://extensions.gnome.org${DOWNLOAD_URL}" -o /tmp/kimpanel.zip
+            unzip -qo /tmp/kimpanel.zip -d /usr/share/gnome-shell/extensions/kimpanel@kde.org/
+            rm -f /tmp/kimpanel.zip
+            glib-compile-schemas /usr/share/gnome-shell/extensions/kimpanel@kde.org/schemas/ 2>/dev/null || true
+        else
+            echo "==> 警告: 未能从 GNOME Extensions API 解析到 Kimpanel 下载链接"
+        fi
+
+        # 5. 系统级预置【雾凇拼音（Rime-ICE）】与出厂配置模板至 /usr/share/ublue-os
+        echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
+        mkdir -p /usr/share/ublue-os/rime-ice
+        git clone --depth 1 https://github.com/iDvel/rime-ice.git /tmp/rime-ice
+        cp -r /tmp/rime-ice/* /usr/share/ublue-os/rime-ice/
+        rm -rf /tmp/rime-ice
+
+        mkdir -p /usr/share/ublue-os/fcitx5-profile
+        cat << 'EOF' > /usr/share/ublue-os/fcitx5-profile/profile
+        [Groups/0]
+        Name=Default
+        Default Layout=us
+        DefaultIM=rime
+
+        [Groups/0/Items/0]
+        Name=keyboard-us
+        Layout=
+
+        [Groups/0/Items/1]
+        Name=rime
+        Layout=
+
+        [GroupOrder]
+        0=Default
+        EOF
+
+        cat << 'EOF' > /usr/share/ublue-os/fcitx5-profile/gtkrc-2.0
+        gtk-im-module="fcitx"
+        EOF
+
+        cat << 'EOF' > /usr/share/ublue-os/fcitx5-profile/gtk3-settings.ini
+        [Settings]
+        gtk-im-module=fcitx
+        EOF
+
+        # 6. Tailscale 后台守护服务开机预设（走 /usr/lib/systemd/system-preset，不碰 /etc）与托盘服务
+        mkdir -p /usr/lib/systemd/system-preset
+        echo "enable tailscaled.service" > /usr/lib/systemd/system-preset/50-tailscale.preset
+
+        cat << 'EOF' > /usr/lib/systemd/user/tailscale-systray.service
+        [Unit]
+        Description=Tailscale System Tray
+        Documentation=https://tailscale.com/kb/1597/linux-systray
+        Requires=dbus.service
+        After=dbus.service graphical-session.target
+        PartOf=graphical-session.target
+
+        [Service]
+        Type=simple
+        ExecStart=/usr/bin/tailscale systray
+        Restart=on-failure
+        RestartSec=5
+
+        [Install]
+        WantedBy=graphical-session.target
+        EOF
+        ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
+
+  # 6. 全局配置 Flatpak 沙盒覆盖规则（走 /usr/share/flatpak/overrides 厂商标准目录）
+  - type: script
+    snippets:
+      - |
+        echo "==> 正在全局注入 Flatpak 厂商级权限覆盖规则（纯 /usr/share 规范）..."
+        mkdir -p /usr/share/flatpak/overrides
+
+        # 1. 修复 LocalSend 中文字体：双重放行字体文件与字体配置
+        cat << 'EOF' > /usr/share/flatpak/overrides/org.localsend.localsend_app
+        [Context]
+        filesystems=xdg-data/fonts:ro;xdg-config/fontconfig:ro;
+        EOF
+
+        # 2. 全局 Flatpak 输入法放行：放行 Fcitx5 配置，让所有 Flatpak 能正常打中文
+        cat << 'EOF' > /usr/share/flatpak/overrides/global
+        [Context]
+        filesystems=xdg-config/fcitx5:ro;
+
+        [Environment]
+        XMODIFIERS=@im=fcitx
+        EOF
+
+  # 7. 必备 Flatpak 软件（融合官方模板 + 个人专属清单 + 交大镜像源）
   - type: default-flatpaks
     configurations:
       - scope: system
         notify: true
         repo:
           name: flathub
-          url: https://mirror.sjtu.edu.cn/flathub    # 【关键修正】必须为 Base URL，杜绝 /summary 404
+          url: https://mirror.sjtu.edu.cn/flathub    # Base URL，杜绝 /summary 404
           title: Flathub (SJTUG Mirror)
         install:
+          - org.mozilla.firefox                 # 【来自模板】火狐浏览器
+          - org.gnome.Loupe                     # 【来自模板】现代图片查看器 Loupe
           - com.google.Chrome                   # 谷歌浏览器
           - org.onlyoffice.desktopeditors       # ONLYOFFICE 办公套件
           - org.localsend.localsend_app         # LocalSend 局域网传输
           - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
           - org.gnome.Boxes                     # GNOME Boxes 虚拟机
+      - scope: user
+        repo:
+          name: flathub
+          url: https://mirror.sjtu.edu.cn/flathub
+          title: Flathub (SJTUG Mirror)
 
-  # 9. 【排查步骤 4 暂时注释】：首次登录全自动装配（Homebrew 与 WezTerm）
-  # 【排查步骤 4 专属诊断】：在构建末尾全面检查 /etc 与 /usr/etc 状态
+  # 8. 首次登录全自动装配（Homebrew 镜像 + WezTerm 霓虹赛博配置 + 纯 /usr 钩子）
   - type: script
     snippets:
       - |
-        echo "==================== [DIAGNOSTIC] ===================="
-        ls -ld /etc /usr/etc 2>/dev/null || true
-        if [ -d /usr/etc ]; then
-            echo "[DIAGNOSTIC] 警告: 检测到 /usr/etc 存在！文件列表："
-            find /usr/etc
-        else
-            echo "[DIAGNOSTIC] 良好: 未发现 /usr/etc 目录。"
-        fi
-        echo "===================================================="
+        echo "==> 正在系统级配置 Homebrew 全局环境与首次登录装配钩子..."
 
-  #   # 9. 首次登录全自动装配（内核级 flock 内存锁 + 先 tap 后 trust + WezTerm 配置自动同步）
-  #   - type: script
-  #     snippets:
-  #       - |
-  #         echo "==> 正在系统级配置 Homebrew 全局环境与首次登录装配钩子..."
-# 
-  #         # 1. 全局配置 Homebrew 环境变量与清华大学镜像源
-  #         mkdir -p /etc/profile.d
-  #         cat << 'EOF' > /etc/profile.d/00-linuxbrew.sh
-  #         export HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
-  #         export HOMEBREW_CELLAR="/home/linuxbrew/.linuxbrew/Cellar"
-  #         export HOMEBREW_REPOSITORY="/home/linuxbrew/.linuxbrew/Homebrew"
-  #         export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:$PATH"
-  #         export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
-  #         export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
-  #         EOF
-  #         chmod 644 /etc/profile.d/00-linuxbrew.sh
-# 
-  #         # 2. 将个人定制 Brewfile 写入系统共享目录（纯 CLI 工具链）
-  #         mkdir -p /usr/share/ublue-os/my-brew
-  #         cat << 'EOF' > /usr/share/ublue-os/my-brew/Brewfile
-  #         tap "anomalyco/tap"
-  #         brew "node"
-  #         brew "pnpm"
-  #         brew "python"
-  #         brew "uv"
-  #         brew "ripgrep"
-  #         brew "jq"
-  #         brew "zstd"
-  #         brew "openssl"
-  #         brew "anomalyco/tap/opencode-v2"
-  #         brew "merve"
-  #         EOF
-# 
-  #         # 3. 将个人定制 WezTerm 终端配置写入系统共享目录（纯 /usr/share 纯净方案）
-  #         cat << 'EOF' > /usr/share/ublue-os/my-brew/wezterm.lua
-  #         local wezterm = require("wezterm")
-  #         local config = {}
-# 
-  #         if wezterm.config_builder then
-  #             config = wezterm.config_builder()
-  #         end
-# 
-  #         -- ================= 窗口尺寸与赛博朋克极简外观 =================
-  #         config.initial_cols = 130
-  #         config.initial_rows = 28
-# 
-  #         -- 彻底去除所有系统边框与外框线条（全纯净无边框体验）
-  #         config.window_decorations = "NONE"
-  #         config.window_close_confirmation = "AlwaysPrompt"
-# 
-  #         -- 消除标签栏与窗口内部任何分割边框
-  #         config.window_frame = {
-  #             border_left_width = '0px',
-  #             border_right_width = '0px',
-  #             border_bottom_height = '0px',
-  #             border_top_height = '0px',
-  #         }
-# 
-  #         -- 赛博轻微透光感（94% 不透明度），既保留深邃霓虹对比度，又有隐约呼吸感
-  #         config.window_background_opacity = 0.94
-# 
-  #         -- 精致均衡的内边距
-  #         config.window_padding = {
-  #             left = 12,
-  #             right = 12,
-  #             top = 10,
-  #             bottom = 8,
-  #         }
-# 
-  #         -- 走 XWayland (X11) 模式，彻底杜绝休眠唤醒后输入法焦点脱节问题
-  #         config.enable_wayland = false
-  #         config.scrollback_lines = 10000
-# 
-  #         -- ================= 顶部赛博霓虹标签栏 =================
-  #         config.enable_tab_bar = true
-  #         config.use_fancy_tab_bar = false       -- 采用现代扁平风格
-  #         config.tab_bar_at_bottom = false      -- 标签栏顶格担任标题栏
-  #         config.tab_max_width = 30
-  #         config.hide_tab_bar_if_only_one_tab = false
-# 
-  #         -- ================= 字体配置 =================
-  #         config.font = wezterm.font_with_fallback({
-  #             "JetBrains Mono",
-  #             "Noto Sans Mono",
-  #             "Noto Sans Mono CJK SC",
-  #         })
-  #         config.font_size = 12.5
-  #         config.warn_about_missing_glyphs = false
-# 
-  #         -- 剪贴板与选取配置
-  #         config.selection_word_boundary = " \t\n{}[]()\"'`"
-# 
-  #         -- ================= 默认启动程序与菜单 =================
-  #         config.default_prog = { "bash", "-l" }
-# 
-  #         config.launch_menu = {
-  #             { label = "bash", args = { "bash", "-l" } },
-  #         }
-# 
-  #         -- ================= ⚡ Synthwave '84 霓虹赛博朋克高对比色彩体系 =================
-  #         local CYBER_BG = "#161026"          -- 幽紫深黑底色
-  #         local CYBER_TAB_BAR = "#110b1f"     -- 顶部深渊紫栏
-  #         local CYBER_ACTIVE_TAB = "#24173d"  -- 激活标签背衬
-  #         local CYBER_NEON_PINK = "#ff7edb"   -- 荧光霓虹粉
-  #         local CYBER_NEON_CYAN = "#36f3e1"   -- 荧光青绿蓝
-  #         local CYBER_NEON_YELLOW = "#fede5d" -- 荧光暖黄
-  #         local CYBER_FG = "#f0eafc"          -- 柔白高对比正文
-# 
-  #         config.colors = {
-  #             background = CYBER_BG,
-  #             foreground = CYBER_FG,
-  #             cursor_bg = CYBER_NEON_PINK,
-  #             cursor_fg = "#ffffff",
-  #             cursor_border = CYBER_NEON_PINK,
-  #             selection_bg = "#492f64",
-  #             selection_fg = "#ffffff",
-# 
-  #             -- ANSI 霓虹荧光色盘（优化色彩对比度，杜绝同亮度浅色文字与浅色背景撞色）
-  #             ansi = {
-  #                 "#1a1528", -- 黑 (深邃暗底)
-  #                 "#fe4450", -- 红 (霓虹赤红)
-  #                 "#72f1b8", -- 绿 (高亮薄荷)
-  #                 "#fede5d", -- 黄 (高亮电黄)
-  #                 "#2563eb", -- 蓝 (鲜明高对比科技蓝，印在绿底背景色块上依然黑白分明)
-  #                 "#ff7edb", -- 紫 (霓虹粉紫)
-  #                 "#36f3e1", -- 青 (赛博高亮青)
-  #                 "#e2daf0", -- 白 (柔和浅灰白)
-  #             },
-  #             brights = {
-  #                 "#3c2f58",
-  #                 "#ff616d",
-  #                 "#88ffc8",
-  #                 "#ffea79",
-  #                 "#4e93ff", -- 高亮亮蓝
-  #                 "#ff94e4",
-  #                 "#69fff1",
-  #                 "#ffffff",
-  #             },
-# 
-  #             tab_bar = {
-  #                 background = CYBER_TAB_BAR,
-  #                 active_tab = {
-  #                     bg_color = CYBER_ACTIVE_TAB,
-  #                     fg_color = CYBER_NEON_PINK,
-  #                     intensity = "Bold",
-  #                 },
-  #                 inactive_tab = {
-  #                     bg_color = CYBER_TAB_BAR,
-  #                     fg_color = "#7c6a99",
-  #                 },
-  #                 inactive_tab_hover = {
-  #                     bg_color = "#1e1333",
-  #                     fg_color = CYBER_NEON_CYAN,
-  #                 },
-  #                 new_tab = {
-  #                     bg_color = CYBER_TAB_BAR,
-  #                     fg_color = "#7c6a99",
-  #                 },
-  #                 new_tab_hover = {
-  #                     bg_color = "#1e1333",
-  #                     fg_color = CYBER_NEON_CYAN,
-  #                 },
-  #             },
-  #         }
-# 
-  #         -- ================= 自定义霓虹胶囊 Tab 样式 =================
-  #         wezterm.on("format-tab-title", function(tab, tabs, panes, cfg, hover, max_width)
-  #             local title = tab.active_pane.title
-  #             if max_width and #title > max_width - 4 then
-  #                 title = wezterm.truncate_right(title, max_width - 6) .. "…"
-  #             end
-# 
-  #             local bg = CYBER_TAB_BAR
-  #             local fg = "#7c6a99"
-  #             local indicator = "   "
-# 
-  #             if tab.is_active then
-  #                 bg = CYBER_ACTIVE_TAB
-  #                 fg = CYBER_NEON_PINK
-  #                 indicator = " ⚡ "
-  #             elseif hover then
-  #                 bg = "#1e1333"
-  #                 fg = CYBER_NEON_CYAN
-  #                 indicator = " ✦ "
-  #             end
-# 
-  #             return {
-  #                 { Background = { Color = bg } },
-  #                 { Foreground = { Color = fg } },
-  #                 { Text = indicator .. title .. "   " },
-  #             }
-  #         end)
-# 
-  #         -- 右上角赛博朋克状态胶囊（显示当前时间与系统标识）
-  #         wezterm.on("update-right-status", function(window, pane)
-  #             local time_str = wezterm.strftime("%H:%M")
-  #             window:set_right_status(wezterm.format {
-  #                 { Background = { Color = CYBER_TAB_BAR } },
-  #                 { Foreground = { Color = CYBER_NEON_CYAN } },
-  #                 { Text = "  " .. time_str .. "  " },
-  #                 { Background = { Color = CYBER_ACTIVE_TAB } },
-  #                 { Foreground = { Color = CYBER_NEON_PINK } },
-  #                 { Text = " CYBERPUNK " },
-  #             })
-  #         end)
-# 
-  #         -- ================= 快捷键 =================
-  #         config.keys = {
-  #             { key = "Enter", mods = "ALT", action = wezterm.action.ToggleFullScreen },
-  #             { key = "x", mods = "ALT", action = wezterm.action.QuitApplication },
-  #             { key = "L", mods = "CTRL|SHIFT", action = wezterm.action.ShowLauncher },
-  #             { key = "Space", mods = "CTRL|SHIFT", action = wezterm.action.ShowLauncherArgs { flags = "LAUNCH_MENU_ITEMS" } },
-  #             { key = "W", mods = "CTRL|SHIFT", action = wezterm.action.CloseCurrentTab { confirm = false } },
-# 
-  #             -- Alt + 1~9 快速切换标签
-  #             { key = '1', mods = 'ALT', action = wezterm.action.ActivateTab(0) },
-  #             { key = '2', mods = 'ALT', action = wezterm.action.ActivateTab(1) },
-  #             { key = '3', mods = 'ALT', action = wezterm.action.ActivateTab(2) },
-  #             { key = '4', mods = 'ALT', action = wezterm.action.ActivateTab(3) },
-  #             { key = '5', mods = 'ALT', action = wezterm.action.ActivateTab(4) },
-  #             { key = '6', mods = 'ALT', action = wezterm.action.ActivateTab(5) },
-  #             { key = '7', mods = 'ALT', action = wezterm.action.ActivateTab(6) },
-  #             { key = '8', mods = 'ALT', action = wezterm.action.ActivateTab(7) },
-  #             { key = '9', mods = 'ALT', action = wezterm.action.ActivateTab(-1) },
-  #             { key = 'Tab', mods = 'CTRL', action = wezterm.action.ActivateTabRelative(1) },
-  #             { key = 'Tab', mods = 'CTRL|SHIFT', action = wezterm.action.ActivateTabRelative(-1) },
-# 
-  #             -- Delete 键取消选中
-  #             {
-  #                 key = 'Delete',
-  #                 mods = 'NONE',
-  #                 action = wezterm.action_callback(function(window, pane)
-  #                     if window:get_selection_text_for_pane(pane) ~= "" then
-  #                         window:perform_action(wezterm.action.ClearSelection, pane)
-  #                     else
-  #                         window:perform_action(wezterm.action.SendKey { key = 'Delete' }, pane)
-  #                     end
-  #                 end),
-  #             },
-  #         }
-# 
-  #         -- ================= 鼠标交互优化 =================
-  #         config.mouse_bindings = {
-  #             -- Ctrl + 左键点击打开链接
-  #             {
-  #                 event = { Up = { streak = 1, button = "Left" } },
-  #                 mods = "CTRL",
-  #                 action = wezterm.action.OpenLinkAtMouseCursor,
-  #             },
-  #             -- 鼠标中键直接关闭当前标签
-  #             {
-  #                 event = { Up = { streak = 1, button = "Middle" } },
-  #                 mods = "NONE",
-  #                 action = wezterm.action.CloseCurrentTab { confirm = false },
-  #             },
-  #             -- 右键交互：有选中时快速复制并清除高亮，无选中时直接粘贴
-  #             {
-  #                 event = { Up = { streak = 1, button = "Right" } },
-  #                 mods = "NONE",
-  #                 action = wezterm.action_callback(function(window, pane)
-  #                     local has_selection = window:get_selection_text_for_pane(pane) ~= ""
-  #                     if has_selection then
-  #                         window:perform_action(wezterm.action.CopyTo("Clipboard"), pane)
-  #                         window:perform_action(wezterm.action.ClearSelection, pane)
-  #                     else
-  #                         window:perform_action(wezterm.action.PasteFrom("Clipboard"), pane)
-  #                     end
-  #                 end),
-  #             },
-  #         }
-# 
-  #         -- ================= 启动选择终端类型 =================
-  #         local STARTUP_CHOICES = {}
-  #         local STARTUP_ARGS = {}
-  #         for i, item in ipairs(config.launch_menu) do
-  #             local id = "m" .. i
-  #             table.insert(STARTUP_CHOICES, { label = item.label, id = id })
-  #             STARTUP_ARGS[id] = item.args
-  #         end
-# 
-  #         wezterm.on("gui-startup", function(cmd)
-  #             local tab, pane, window = wezterm.mux.spawn_window(cmd or {})
-# 
-  #             -- 如果外部指定了工作目录（如文件夹右键打开），直接进入该目录，不弹出选择框
-  #             if cmd and cmd.cwd and cmd.cwd ~= "" then
-  #                 return
-  #             end
-# 
-  #             local gui = window:gui_window()
-  #             if gui then
-  #                 gui:perform_action(wezterm.action.InputSelector {
-  #                     title = "选择终端类型",
-  #                     choices = STARTUP_CHOICES,
-  #                     fuzzy = true,
-  #                     action = wezterm.action_callback(function(win, win_pane, id)
-  #                         if not id then return end
-  #                         local args = STARTUP_ARGS[id]
-  #                         if args and (args[1] ~= "bash") then
-  #                             win:perform_action(wezterm.action.SpawnCommandInNewTab { args = args }, win_pane)
-  #                             pane:window():active_tab():activate()
-  #                         end
-  #                     end),
-  #                 }, pane)
-  #             end
-  #         end)
-# 
-  #         -- ================= 标签栏操作 =================
-  #         wezterm.on("new-tab-button-click", function(window, pane, button, default_action)
-  #             if button == "Left" then
-  #                 if default_action then
-  #                     window:perform_action(default_action, pane)
-  #                 end
-  #                 return false
-  #             elseif button == "Right" then
-  #                 -- 右键点击加号呼出启动菜单
-  #                 window:perform_action(wezterm.action.ShowLauncherArgs {
-  #                     flags = "LAUNCH_MENU_ITEMS"
-  #                 }, pane)
-  #                 return false
-  #             end
-  #         end)
-# 
-  #         return config
-  #         EOF
-# 
-  #         # 4. 注入 Bluefin 官方首登执行脚本
-  #         mkdir -p /usr/share/ublue-os/user-setup.hooks.d
-  #         cat << 'EOF' > /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
-  #         #!/usr/bin/env bash
-# 
-  #         # 确保新用户基础目录健全（符合 XDG 规范）
-  #         mkdir -p "$HOME/.config" "$HOME/.local/share/fonts" "$HOME/.local/state"
-# 
-  #         # 确保当前用户目录下具有 LocalSend 渲染所需的回退中文字体
-  #         if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
-  #             cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
-  #         fi
-# 
-  #         # 确保 WezTerm 终端配置自动下发至用户主目录
-  #         mkdir -p "$HOME/.config/wezterm"
-  #         if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
-  #             cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
-  #         fi
-# 
-  #         # 确保 GTK2 配置文件自动下发至用户主目录
-  #         if [ ! -f "$HOME/.gtkrc-2.0" ] && [ -f /etc/skel/.gtkrc-2.0 ]; then
-  #             cp /etc/skel/.gtkrc-2.0 "$HOME/.gtkrc-2.0"
-  #         fi
-# 
-  #         # 确保系统级预置的 Kimpanel 扩展自动激活
-  #         which gnome-extensions >/dev/null 2>&1 && gnome-extensions enable kimpanel@kde.org 2>/dev/null || true
-# 
-  #         # 同步锁定用户级（--user）Flatpak 镜像为上海交大源（采用 Base URL）
-  #         flatpak remote-add --user --if-not-exists flathub https://mirror.sjtu.edu.cn/flathub/flathub.flatpakrepo 2>/dev/null || true
-  #         flatpak remote-modify --user flathub --url=https://mirror.sjtu.edu.cn/flathub 2>/dev/null || true
-# 
-  #         # 幂等性检测：已安装完成则直接退出
-  #         INSTALL_FLAG="$HOME/.config/user-brew-installed"
-  #         [ -f "$INSTALL_FLAG" ] && exit 0
-# 
-  #         BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
-# 
-  #         # 异步在后台运行，并将日志输出到用户隔离目录
-  #         (
-  #             # 使用内存级 runtime 目录排他锁，关机或崩溃内核自动释放，绝不死锁
-  #             LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/simon-brew.lock"
-  #             exec 200>"$LOCK_FILE"
-  #             if ! flock -n 200; then
-  #                 exit 0
-  #             fi
-# 
-  #             # 初次启动触发 Rime 词库编译部署（确保雾凇词库立即可用）
-  #             which fcitx5-remote >/dev/null 2>&1 && fcitx5-remote -r 2>/dev/null || true
-# 
-  #             # 等待 Bluefin 自带解压 Homebrew 完成（最多等 120 秒）
-  #             count=0
-  #             while [ ! -x "${BREW_BIN}" ] && [ $count -lt 60 ]; do
-  #                 sleep 2
-  #                 count=$((count + 1))
-  #             done
-# 
-  #             [ ! -x "${BREW_BIN}" ] && exit 0
-# 
-  #             # 国内网络探测（检测清华镜像连通性，避免 curl github.com 超时判死）
-  #             net_count=0
-  #             while ! curl -s --connect-timeout 2 https://mirrors.tuna.tsinghua.edu.cn > /dev/null && [ $net_count -lt 30 ]; do
-  #                 sleep 2
-  #                 net_count=$((net_count + 1))
-  #             done
-# 
-  #             # 加载环境变量与国内清华 Bottle 镜像（解决 ghcr.io 连接被重置问题）
-  #             eval "$("${BREW_BIN}" shellenv)"
-  #             export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
-  #             export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
-# 
-  #             # 显式先拉取第三方 Tap，再信任授权，彻底避免 bundle 因 untrusted tap 拒绝安装
-  #             "${BREW_BIN}" tap anomalyco/tap
-  #             "${BREW_BIN}" trust anomalyco/tap
-# 
-  #             # 执行安装并通知桌面
-  #             if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
-  #                 touch "$INSTALL_FLAG"
-  #                 which notify-send >/dev/null 2>&1 && notify-send "系统初始化通知" "个人 Homebrew 开发工具已全自动安装完成！" -i package-x-generic
-  #             fi
-  #         ) >"$HOME/.local/state/brew-setup.log" 2>&1 &
-  #         EOF
-# 
-  #         chmod +x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
-# 
-  #         echo "==> [DIAGNOSTIC] 构建末尾全面检查 /usr/etc 状态..."
-  #         if [ -d /usr/etc ]; then
-  #             echo "==> [DIAGNOSTIC] 严重发现: 构建最终阶段存在 /usr/etc！完整文件树如下："
-  #             find /usr/etc
-  #         else
-  #             echo "==> [DIAGNOSTIC] 良好: 构建最终阶段未发现 /usr/etc 目录。"
-  #         fi
-# 
+        # 1. 全局配置 Homebrew 环境变量与清华大学镜像源（放入 /usr/lib/environment.d）
+        mkdir -p /usr/lib/environment.d
+        cat << 'EOF' > /usr/lib/environment.d/00-linuxbrew.conf
+        HOMEBREW_PREFIX=/home/linuxbrew/.linuxbrew
+        HOMEBREW_CELLAR=/home/linuxbrew/.linuxbrew/Cellar
+        HOMEBREW_REPOSITORY=/home/linuxbrew/.linuxbrew/Homebrew
+        HOMEBREW_API_DOMAIN=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api
+        HOMEBREW_BOTTLE_DOMAIN=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles
+        EOF
+
+        # 2. 将个人定制 Brewfile 写入系统共享目录（纯 CLI 工具链）
+        mkdir -p /usr/share/ublue-os/my-brew
+        cat << 'EOF' > /usr/share/ublue-os/my-brew/Brewfile
+        tap "anomalyco/tap"
+        brew "node"
+        brew "pnpm"
+        brew "python"
+        brew "uv"
+        brew "ripgrep"
+        brew "jq"
+        brew "zstd"
+        brew "openssl"
+        brew "anomalyco/tap/opencode-v2"
+        brew "merve"
+        EOF
+
+        # 3. 将个人定制 WezTerm 终端配置写入系统共享目录（纯 /usr/share 纯净方案）
+        cat << 'EOF' > /usr/share/ublue-os/my-brew/wezterm.lua
+        local wezterm = require("wezterm")
+        local config = {}
+
+        if wezterm.config_builder then
+            config = wezterm.config_builder()
+        end
+
+        -- ================= 窗口尺寸与赛博朋克极简外观 =================
+        config.initial_cols = 130
+        config.initial_rows = 28
+
+        -- 彻底去除所有系统边框与外框线条（全纯净无边框体验）
+        config.window_decorations = "NONE"
+        config.window_close_confirmation = "AlwaysPrompt"
+
+        -- 消除标签栏与窗口内部任何分割边框
+        config.window_frame = {
+            border_left_width = '0px',
+            border_right_width = '0px',
+            border_bottom_height = '0px',
+            border_top_height = '0px',
+        }
+
+        -- 赛博轻微透光感（94% 不透明度），既保留深邃霓虹对比度，又有隐约呼吸感
+        config.window_background_opacity = 0.94
+
+        -- 精致均衡的内边距
+        config.window_padding = {
+            left = 12,
+            right = 12,
+            top = 10,
+            bottom = 8,
+        }
+
+        -- 走 XWayland (X11) 模式，彻底杜绝休眠唤醒后输入法焦点脱节问题
+        config.enable_wayland = false
+        config.scrollback_lines = 10000
+
+        -- ================= 顶部赛博霓虹标签栏 =================
+        config.enable_tab_bar = true
+        config.use_fancy_tab_bar = false       -- 采用现代扁平风格
+        config.tab_bar_at_bottom = false      -- 标签栏顶格担任标题栏
+        config.tab_max_width = 30
+        config.hide_tab_bar_if_only_one_tab = false
+
+        -- ================= 字体配置 =================
+        config.font = wezterm.font_with_fallback({
+            "JetBrains Mono",
+            "Noto Sans Mono",
+            "Noto Sans Mono CJK SC",
+        })
+        config.font_size = 12.5
+        config.warn_about_missing_glyphs = false
+
+        -- 剪贴板与选取配置
+        config.selection_word_boundary = " \t\n{}[]()\"'`"
+
+        -- ================= 默认启动程序与菜单 =================
+        config.default_prog = { "bash", "-l" }
+
+        config.launch_menu = {
+            { label = "bash", args = { "bash", "-l" } },
+        }
+
+        -- ================= ⚡ Synthwave '84 霓虹赛博朋克高对比色彩体系 =================
+        local CYBER_BG = "#161026"          -- 幽紫深黑底色
+        local CYBER_TAB_BAR = "#110b1f"     -- 顶部深渊紫栏
+        local CYBER_ACTIVE_TAB = "#24173d"  -- 激活标签背衬
+        local CYBER_NEON_PINK = "#ff7edb"   -- 荧光霓虹粉
+        local CYBER_NEON_CYAN = "#36f3e1"   -- 荧光青绿蓝
+        local CYBER_NEON_YELLOW = "#fede5d" -- 荧光暖黄
+        local CYBER_FG = "#f0eafc"          -- 柔白高对比正文
+
+        config.colors = {
+            background = CYBER_BG,
+            foreground = CYBER_FG,
+            cursor_bg = CYBER_NEON_PINK,
+            cursor_fg = "#ffffff",
+            cursor_border = CYBER_NEON_PINK,
+            selection_bg = "#492f64",
+            selection_fg = "#ffffff",
+
+            -- ANSI 霓虹荧光色盘（优化色彩对比度，杜绝同亮度浅色文字与浅色背景撞色）
+            ansi = {
+                "#1a1528", -- 黑 (深邃暗底)
+                "#fe4450", -- 红 (霓虹赤红)
+                "#72f1b8", -- 绿 (高亮薄荷)
+                "#fede5d", -- 黄 (高亮电黄)
+                "#2563eb", -- 蓝 (鲜明高对比科技蓝，印在绿底背景色块上依然黑白分明)
+                "#ff7edb", -- 紫 (霓虹粉紫)
+                "#36f3e1", -- 青 (赛博高亮青)
+                "#e2daf0", -- 白 (柔和浅灰白)
+            },
+            brights = {
+                "#3c2f58",
+                "#ff616d",
+                "#88ffc8",
+                "#ffea79",
+                "#4e93ff", -- 高亮亮蓝
+                "#ff94e4",
+                "#69fff1",
+                "#ffffff",
+            },
+
+            tab_bar = {
+                background = CYBER_TAB_BAR,
+                active_tab = {
+                    bg_color = CYBER_ACTIVE_TAB,
+                    fg_color = CYBER_NEON_PINK,
+                    intensity = "Bold",
+                },
+                inactive_tab = {
+                    bg_color = CYBER_TAB_BAR,
+                    fg_color = "#7c6a99",
+                },
+                inactive_tab_hover = {
+                    bg_color = "#1e1333",
+                    fg_color = CYBER_NEON_CYAN,
+                },
+                new_tab = {
+                    bg_color = CYBER_TAB_BAR,
+                    fg_color = "#7c6a99",
+                },
+                new_tab_hover = {
+                    bg_color = "#1e1333",
+                    fg_color = CYBER_NEON_CYAN,
+                },
+            },
+        }
+
+        -- ================= 自定义霓虹胶囊 Tab 样式 =================
+        wezterm.on("format-tab-title", function(tab, tabs, panes, cfg, hover, max_width)
+            local title = tab.active_pane.title
+            if max_width and #title > max_width - 4 then
+                title = wezterm.truncate_right(title, max_width - 6) .. "…"
+            end
+
+            local bg = CYBER_TAB_BAR
+            local fg = "#7c6a99"
+            local indicator = "   "
+
+            if tab.is_active then
+                bg = CYBER_ACTIVE_TAB
+                fg = CYBER_NEON_PINK
+                indicator = " ⚡ "
+            elseif hover then
+                bg = "#1e1333"
+                fg = CYBER_NEON_CYAN
+                indicator = " ✦ "
+            end
+
+            return {
+                { Background = { Color = bg } },
+                { Foreground = { Color = fg } },
+                { Text = indicator .. title .. "   " },
+            }
+        end)
+
+        -- 右上角赛博朋克状态胶囊（显示当前时间与系统标识）
+        wezterm.on("update-right-status", function(window, pane)
+            local time_str = wezterm.strftime("%H:%M")
+            window:set_right_status(wezterm.format {
+                { Background = { Color = CYBER_TAB_BAR } },
+                { Foreground = { Color = CYBER_NEON_CYAN } },
+                { Text = "  " .. time_str .. "  " },
+                { Background = { Color = CYBER_ACTIVE_TAB } },
+                { Foreground = { Color = CYBER_NEON_PINK } },
+                { Text = " CYBERPUNK " },
+            })
+        end)
+
+        -- ================= 快捷键 =================
+        config.keys = {
+            { key = "Enter", mods = "ALT", action = wezterm.action.ToggleFullScreen },
+            { key = "x", mods = "ALT", action = wezterm.action.QuitApplication },
+            { key = "L", mods = "CTRL|SHIFT", action = wezterm.action.ShowLauncher },
+            { key = "Space", mods = "CTRL|SHIFT", action = wezterm.action.ShowLauncherArgs { flags = "LAUNCH_MENU_ITEMS" } },
+            { key = "W", mods = "CTRL|SHIFT", action = wezterm.action.CloseCurrentTab { confirm = false } },
+
+            -- Alt + 1~9 快速切换标签
+            { key = '1', mods = 'ALT', action = wezterm.action.ActivateTab(0) },
+            { key = '2', mods = 'ALT', action = wezterm.action.ActivateTab(1) },
+            { key = '3', mods = 'ALT', action = wezterm.action.ActivateTab(2) },
+            { key = '4', mods = 'ALT', action = wezterm.action.ActivateTab(3) },
+            { key = '5', mods = 'ALT', action = wezterm.action.ActivateTab(4) },
+            { key = '6', mods = 'ALT', action = wezterm.action.ActivateTab(5) },
+            { key = '7', mods = 'ALT', action = wezterm.action.ActivateTab(6) },
+            { key = '8', mods = 'ALT', action = wezterm.action.ActivateTab(7) },
+            { key = '9', mods = 'ALT', action = wezterm.action.ActivateTab(-1) },
+            { key = 'Tab', mods = 'CTRL', action = wezterm.action.ActivateTabRelative(1) },
+            { key = 'Tab', mods = 'CTRL|SHIFT', action = wezterm.action.ActivateTabRelative(-1) },
+
+            -- Delete 键取消选中
+            {
+                key = 'Delete',
+                mods = 'NONE',
+                action = wezterm.action_callback(function(window, pane)
+                    if window:get_selection_text_for_pane(pane) ~= "" then
+                        window:perform_action(wezterm.action.ClearSelection, pane)
+                    else
+                        window:perform_action(wezterm.action.SendKey { key = 'Delete' }, pane)
+                    end
+                end),
+            },
+        }
+
+        -- ================= 鼠标交互优化 =================
+        config.mouse_bindings = {
+            -- Ctrl + 左键点击打开链接
+            {
+                event = { Up = { streak = 1, button = "Left" } },
+                mods = "CTRL",
+                action = wezterm.action.OpenLinkAtMouseCursor,
+            },
+            -- 鼠标中键直接关闭当前标签
+            {
+                event = { Up = { streak = 1, button = "Middle" } },
+                mods = "NONE",
+                action = wezterm.action.CloseCurrentTab { confirm = false },
+            },
+            -- 右键交互：有选中时快速复制并清除高亮，无选中时直接粘贴
+            {
+                event = { Up = { streak = 1, button = "Right" } },
+                mods = "NONE",
+                action = wezterm.action_callback(function(window, pane)
+                    local has_selection = window:get_selection_text_for_pane(pane) ~= ""
+                    if has_selection then
+                        window:perform_action(wezterm.action.CopyTo("Clipboard"), pane)
+                        window:perform_action(wezterm.action.ClearSelection, pane)
+                    else
+                        window:perform_action(wezterm.action.PasteFrom("Clipboard"), pane)
+                    end
+                end),
+            },
+        }
+
+        -- ================= 启动选择终端类型 =================
+        local STARTUP_CHOICES = {}
+        local STARTUP_ARGS = {}
+        for i, item in ipairs(config.launch_menu) do
+            local id = "m" .. i
+            table.insert(STARTUP_CHOICES, { label = item.label, id = id })
+            STARTUP_ARGS[id] = item.args
+        end
+
+        wezterm.on("gui-startup", function(cmd)
+            local tab, pane, window = wezterm.mux.spawn_window(cmd or {})
+
+            -- 如果外部指定了工作目录（如文件夹右键打开），直接进入该目录，不弹出选择框
+            if cmd and cmd.cwd and cmd.cwd ~= "" then
+                return
+            end
+
+            local gui = window:gui_window()
+            if gui then
+                gui:perform_action(wezterm.action.InputSelector {
+                    title = "选择终端类型",
+                    choices = STARTUP_CHOICES,
+                    fuzzy = true,
+                    action = wezterm.action_callback(function(win, win_pane, id)
+                        if not id then return end
+                        local args = STARTUP_ARGS[id]
+                        if args and (args[1] ~= "bash") then
+                            win:perform_action(wezterm.action.SpawnCommandInNewTab { args = args }, win_pane)
+                            pane:window():active_tab():activate()
+                        end
+                    end),
+                }, pane)
+            end
+        end)
+
+        -- ================= 标签栏操作 =================
+        wezterm.on("new-tab-button-click", function(window, pane, button, default_action)
+            if button == "Left" then
+                if default_action then
+                    window:perform_action(default_action, pane)
+                end
+                return false
+            elseif button == "Right" then
+                -- 右键点击加号呼出启动菜单
+                window:perform_action(wezterm.action.ShowLauncherArgs {
+                    flags = "LAUNCH_MENU_ITEMS"
+                }, pane)
+                return false
+            end
+        end)
+
+        return config
+        EOF
+
+        # 4. 注入 Bluefin 官方首登执行脚本（从 /usr/share 优雅下发至用户主目录）
+        mkdir -p /usr/share/ublue-os/user-setup.hooks.d
+        cat << 'EOF' > /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
+        #!/usr/bin/env bash
+
+        # 确保新用户基础目录健全（符合 XDG 规范）
+        mkdir -p "$HOME/.config" "$HOME/.local/share/fonts" "$HOME/.local/state" "$HOME/.config/autostart"
+
+        # 确保当前用户目录下具有 LocalSend 渲染所需的回退中文字体
+        if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
+            cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
+        fi
+
+        # 确保 WezTerm 终端配置自动下发至用户主目录
+        mkdir -p "$HOME/.config/wezterm"
+        if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
+            cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
+        fi
+
+        # 确保雾凇拼音 Rime 词库与配置自动下发至用户主目录
+        mkdir -p "$HOME/.local/share/fcitx5/rime" "$HOME/.config/fcitx5" "$HOME/.config/gtk-3.0"
+        if [ ! -f "$HOME/.local/share/fcitx5/rime/default.yaml" ] && [ -d /usr/share/ublue-os/rime-ice ]; then
+            cp -rn /usr/share/ublue-os/rime-ice/* "$HOME/.local/share/fcitx5/rime/"
+        fi
+        if [ ! -f "$HOME/.config/fcitx5/profile" ] && [ -f /usr/share/ublue-os/fcitx5-profile/profile ]; then
+            cp /usr/share/ublue-os/fcitx5-profile/profile "$HOME/.config/fcitx5/profile"
+        fi
+        if [ ! -f "$HOME/.gtkrc-2.0" ] && [ -f /usr/share/ublue-os/fcitx5-profile/gtkrc-2.0 ]; then
+            cp /usr/share/ublue-os/fcitx5-profile/gtkrc-2.0 "$HOME/.gtkrc-2.0"
+        fi
+        if [ ! -f "$HOME/.config/gtk-3.0/settings.ini" ] && [ -f /usr/share/ublue-os/fcitx5-profile/gtk3-settings.ini ]; then
+            cp /usr/share/ublue-os/fcitx5-profile/gtk3-settings.ini "$HOME/.config/gtk-3.0/settings.ini"
+        fi
+
+        # 确保禁用 Cloudflare WARP 开机自启动托盘
+        cat << 'AUTOLOAD' > "$HOME/.config/autostart/warp-taskbar.desktop"
+        [Desktop Entry]
+        Type=Application
+        Name=Cloudflare WARP
+        Hidden=true
+        AUTOLOAD
+
+        # 确保系统级预置的 Kimpanel 扩展自动激活
+        which gnome-extensions >/dev/null 2>&1 && gnome-extensions enable kimpanel@kde.org 2>/dev/null || true
+
+        # 同步锁定用户级（--user）Flatpak 镜像为上海交大源（采用 Base URL）
+        flatpak remote-add --user --if-not-exists flathub https://mirror.sjtu.edu.cn/flathub 2>/dev/null || true
+        flatpak remote-modify --user flathub --url=https://mirror.sjtu.edu.cn/flathub 2>/dev/null || true
+
+        # 确保 ~/.bashrc 中包含 Homebrew 环境变量
+        if ! grep -q "linuxbrew" "$HOME/.bashrc" 2>/dev/null; then
+            cat << 'BREWENV' >> "$HOME/.bashrc"
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null)"
+        export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
+        export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+        BREWENV
+        fi
+
+        # 幂等性检测：已安装完成则直接退出
+        INSTALL_FLAG="$HOME/.config/user-brew-installed"
+        [ -f "$INSTALL_FLAG" ] && exit 0
+
+        BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
+
+        # 异步在后台运行，并将日志输出到用户隔离目录
+        (
+            # 使用内存级 runtime 目录排他锁，关机或崩溃内核自动释放，绝不死锁
+            LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/simon-brew.lock"
+            exec 200>"$LOCK_FILE"
+            if ! flock -n 200; then
+                exit 0
+            fi
+
+            # 初次启动触发 Rime 词库编译部署（确保雾凇词库立即可用）
+            which fcitx5-remote >/dev/null 2>&1 && fcitx5-remote -r 2>/dev/null || true
+
+            # 等待 Bluefin 自带解压 Homebrew 完成（最多等 120 秒）
+            count=0
+            while [ ! -x "${BREW_BIN}" ] && [ $count -lt 60 ]; do
+                sleep 2
+                count=$((count + 1))
+            done
+
+            [ ! -x "${BREW_BIN}" ] && exit 0
+
+            # 国内网络探测（检测清华镜像连通性，避免 curl github.com 超时判死）
+            net_count=0
+            while ! curl -s --connect-timeout 2 https://mirrors.tuna.tsinghua.edu.cn > /dev/null && [ $net_count -lt 30 ]; do
+                sleep 2
+                net_count=$((net_count + 1))
+            done
+
+            # 加载环境变量与国内清华 Bottle 镜像（解决 ghcr.io 连接被重置问题）
+            eval "$("${BREW_BIN}" shellenv)"
+            export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
+            export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+
+            # 显式先拉取第三方 Tap，再信任授权，彻底避免 bundle 因 untrusted tap 拒绝安装
+            "${BREW_BIN}" tap anomalyco/tap
+            "${BREW_BIN}" trust anomalyco/tap
+
+            # 执行安装并通知桌面
+            if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
+                touch "$INSTALL_FLAG"
+                which notify-send >/dev/null 2>&1 && notify-send "系统初始化通知" "个人 Homebrew 开发工具已全自动安装完成！" -i package-x-generic
+            fi
+        ) >"$HOME/.local/state/brew-setup.log" 2>&1 &
+        EOF
+
+        chmod +x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
+
+  # 9. 规范化兜底保障：若检测到出厂模板 /usr/etc 则彻底消除冲突，杜绝 Tree contains both 错误
+  - type: script
+    snippets:
+      - |
+        echo "==> [OSTree 规范化] 检查 /usr/etc 状态..."
+        if [ -d /usr/etc ]; then
+            echo "==> 检测到 /usr/etc，正在将其合并并彻底移除以消除冲突..."
+            cp -rn /usr/etc/* /etc/ 2>/dev/null || true
+            rm -rf /usr/etc
+            echo "==> /usr/etc 已成功彻底移除！"
+        else
+            echo "==> 良好: 镜像中未发现 /usr/etc 目录。"
+        fi
+
   # 10. 容器镜像加密数字签名（必选）
   - type: signing
