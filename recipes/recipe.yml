@@ -58,17 +58,27 @@ modules:
         EOF
         chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules
 
-  # 3. 系统级植入 Cloudflare WARP 一键启停桌面图标，并通过 preset 关闭自启
+  # 3. 系统级植入 Cloudflare WARP 一键启停桌面图标，并彻底消除 RPM 脚本写入 /etc 的开机自启
   - type: script
     snippets:
       - |
         echo "==> 正在系统级植入 Cloudflare WARP 一键启动与退出桌面图标，并通过 preset 关闭自启..."
-        mkdir -p /usr/share/applications
+        mkdir -p /usr/share/applications /usr/lib/systemd/system /usr/lib/systemd/system-preset /usr/lib/systemd/user-preset
 
-        # 禁用 warp-svc 与 warp-taskbar 服务默认自启（走 /usr/lib 标准预设，不碰 /etc）
-        mkdir -p /usr/lib/systemd/system-preset /usr/lib/systemd/user-preset
+        # 将 cloudflare-warp RPM %posttrans 写入 /etc 的单元收归 /usr/lib，并移除开机自启软链接
+        if [ -f /etc/systemd/system/warp-svc.service ]; then
+            mv -f /etc/systemd/system/warp-svc.service /usr/lib/systemd/system/warp-svc.service
+        elif [ -f /opt/cloudflare-warp/warp-svc.service ]; then
+            cp -f /opt/cloudflare-warp/warp-svc.service /usr/lib/systemd/system/warp-svc.service
+        fi
+        rm -f /etc/systemd/system/multi-user.target.wants/warp-svc.service
+
+        # 禁用 warp-svc、warp-taskbar 与新版 warp-desktop-svc 服务默认自启（走 /usr/lib 标准预设，不碰 /etc）
         echo "disable warp-svc.service" > /usr/lib/systemd/system-preset/50-warp.preset
-        echo "disable warp-taskbar.service" > /usr/lib/systemd/user-preset/50-warp.preset
+        cat << 'EOF' > /usr/lib/systemd/user-preset/50-warp.preset
+        disable warp-taskbar.service
+        disable warp-desktop-svc.service
+        EOF
 
         # 启动图标（走 Polkit 授权，无需 sudo）
         cat << 'EOF' > /usr/share/applications/cf-start.desktop
@@ -183,8 +193,8 @@ modules:
             curl -sSL "https://extensions.gnome.org/download-extension/${UUID}.shell-extension.zip?version_tag=${VERSION_TAG}" -o /tmp/kimpanel.zip
             unzip -qo /tmp/kimpanel.zip -d /usr/share/gnome-shell/extensions/kimpanel@kde.org/
             rm -f /tmp/kimpanel.zip
-            # 扩展兼容性列表，避免在新版 GNOME Shell 46/47/48 上被版本检查拦截
-            sed -i 's/"shell-version": \[/"shell-version": ["44", "45", "46", "47", "48", /g' /usr/share/gnome-shell/extensions/kimpanel@kde.org/metadata.json 2>/dev/null || true
+            # 扩展兼容性列表，覆盖 GNOME Shell 44~50，避免在新版 GNOME Shell 上被版本检查拦截
+            sed -i 's/"shell-version": \[/"shell-version": ["44", "45", "46", "47", "48", "49", "50", /g' /usr/share/gnome-shell/extensions/kimpanel@kde.org/metadata.json 2>/dev/null || true
             chmod -R a+rX /usr/share/gnome-shell/extensions/kimpanel@kde.org/
             glib-compile-schemas /usr/share/gnome-shell/extensions/kimpanel@kde.org/schemas/ 2>/dev/null || true
             echo "==> Kimpanel 官方扩展已成功解压并预置到 /usr/share/gnome-shell/extensions/kimpanel@kde.org"
@@ -250,26 +260,33 @@ modules:
         EOF
         ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
 
-  # 6. 全局配置 Flatpak 沙盒覆盖规则（走 /usr/share/flatpak/overrides 厂商标准目录）
+  # 6. 全局配置 Flatpak 沙盒覆盖规则（走 /usr/share/ublue-os/flatpak-overrides + tmpfiles.d 挂载至 /var/lib/flatpak/overrides）
   - type: script
     snippets:
       - |
-        echo "==> 正在全局注入 Flatpak 厂商级权限覆盖规则（纯 /usr/share 规范）..."
-        mkdir -p /usr/share/flatpak/overrides
+        echo "==> 正在全局注入 Flatpak 厂商级权限覆盖规则（纯 /usr 规范 + tmpfiles.d 自动映射）..."
+        mkdir -p /usr/share/ublue-os/flatpak-overrides /usr/lib/tmpfiles.d
 
         # 1. 修复 LocalSend 中文字体：双重放行字体文件与字体配置
-        cat << 'EOF' > /usr/share/flatpak/overrides/org.localsend.localsend_app
+        cat << 'EOF' > /usr/share/ublue-os/flatpak-overrides/org.localsend.localsend_app
         [Context]
         filesystems=xdg-data/fonts:ro;xdg-config/fontconfig:ro;
         EOF
 
         # 2. 全局 Flatpak 输入法放行：放行 Fcitx5 配置，让所有 Flatpak 能正常打中文
-        cat << 'EOF' > /usr/share/flatpak/overrides/global
+        cat << 'EOF' > /usr/share/ublue-os/flatpak-overrides/global
         [Context]
         filesystems=xdg-config/fcitx5:ro;
 
         [Environment]
         XMODIFIERS=@im=fcitx
+        EOF
+
+        # 通过 systemd-tmpfiles 将 /usr/share 下的只读覆盖规则软链接至 Flatpak 实际读取的 /var/lib/flatpak/overrides
+        cat << 'EOF' > /usr/lib/tmpfiles.d/my-flatpak-overrides.conf
+        d /var/lib/flatpak/overrides 0755 root root - -
+        L+ /var/lib/flatpak/overrides/org.localsend.localsend_app - - - - /usr/share/ublue-os/flatpak-overrides/org.localsend.localsend_app
+        L+ /var/lib/flatpak/overrides/global - - - - /usr/share/ublue-os/flatpak-overrides/global
         EOF
 
         # 3. 创建系统级 Flatpak 前置自愈服务：在自动下载前强制将 Flathub 锁定为中科大高速镜像
@@ -319,6 +336,13 @@ modules:
       - |
         echo "==> 正在系统级配置 Homebrew 全局环境与首次登录装配钩子..."
 
+        # 0. 为 ublue-user-setup.service 注入 Drop-in 策略：使用 KillMode=process 防止服务退出时连带杀死后台异步 brew 安装进程
+        mkdir -p /usr/lib/systemd/user/ublue-user-setup.service.d
+        cat << 'EOF' > /usr/lib/systemd/user/ublue-user-setup.service.d/10-keep-background.conf
+        [Service]
+        KillMode=process
+        EOF
+
         # 1. 全局配置 Homebrew 环境变量与清华大学镜像源（放入 /usr/lib/environment.d）
         mkdir -p /usr/lib/environment.d
         cat << 'EOF' > /usr/lib/environment.d/00-linuxbrew.conf
@@ -350,7 +374,7 @@ modules:
         mkdir -p /usr/share/ublue-os/taps/anomalyco
         git clone --depth 1 https://github.com/anomalyco/homebrew-tap.git /usr/share/ublue-os/taps/anomalyco/homebrew-tap
 
-        # 3. 将个人定制 WezTerm 终端配置写入系统共享目录（纯 /usr/share 纯净方案）
+        # 4. 将个人定制 WezTerm 终端配置写入系统共享目录（纯 /usr/share 纯净方案）
         cat << 'EOF' > /usr/share/ublue-os/my-brew/wezterm.lua
         local wezterm = require("wezterm")
         local config = {}
@@ -642,17 +666,22 @@ modules:
         return config
         EOF
 
-        # 4. 注入 Bluefin 官方首登执行脚本（从 /usr/share 优雅下发至用户主目录）
+        # 5. 注入 Bluefin 官方首登执行脚本（从 /usr/share 优雅下发至用户主目录）
         mkdir -p /usr/share/ublue-os/user-setup.hooks.d
         cat << 'EOF' > /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
         #!/usr/bin/env bash
 
         # 确保新用户基础目录健全（符合 XDG 规范）
-        mkdir -p "$HOME/.config" "$HOME/.local/share/fonts" "$HOME/.local/state" "$HOME/.config/autostart"
+        mkdir -p "$HOME/.config" "$HOME/.local/share/fonts" "$HOME/.local/state" "$HOME/.config/autostart" "$HOME/.local/share/flatpak/overrides"
 
         # 确保当前用户目录下具有 LocalSend 渲染所需的回退中文字体
         if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
             cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
+        fi
+
+        # 同步下发用户级 Flatpak 权限覆盖规则（与系统级 /var/lib/flatpak/overrides 双重保障）
+        if [ -d /usr/share/ublue-os/flatpak-overrides ]; then
+            cp -rn /usr/share/ublue-os/flatpak-overrides/* "$HOME/.local/share/flatpak/overrides/" 2>/dev/null || true
         fi
 
         # 确保 WezTerm 终端配置自动下发至用户主目录
@@ -686,9 +715,9 @@ modules:
         AUTOLOAD
         cp "$HOME/.config/autostart/com.cloudflare.WarpTaskbar.desktop" "$HOME/.config/autostart/warp-taskbar.desktop" 2>/dev/null || true
 
-        # 彻底停用并屏蔽用户级 systemd warp-taskbar 服务
-        which systemctl >/dev/null 2>&1 && systemctl --user disable --now warp-taskbar 2>/dev/null || true
-        which systemctl >/dev/null 2>&1 && systemctl --user mask warp-taskbar 2>/dev/null || true
+        # 彻底停用并屏蔽用户级 systemd warp-taskbar 与 warp-desktop-svc 服务
+        which systemctl >/dev/null 2>&1 && systemctl --user disable --now warp-taskbar warp-desktop-svc 2>/dev/null || true
+        which systemctl >/dev/null 2>&1 && systemctl --user mask warp-taskbar warp-desktop-svc 2>/dev/null || true
 
         # 确保解除 GNOME Shell 扩展版本限制并激活 Kimpanel
         which gsettings >/dev/null 2>&1 && gsettings set org.gnome.shell disable-extension-version-validation true 2>/dev/null || true
@@ -719,7 +748,7 @@ modules:
 
         BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
 
-        # 异步在后台运行，并将日志输出到用户隔离目录
+        # 异步在后台运行，并将日志输出到用户隔离目录（配合 10-keep-background.conf 杜绝被 systemd 回收杀死）
         (
             # 使用内存级 runtime 目录排他锁，关机或崩溃内核自动释放，绝不死锁
             LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/simon-brew.lock"
