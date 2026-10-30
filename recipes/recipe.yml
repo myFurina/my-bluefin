@@ -58,12 +58,18 @@ modules:
         repo-name: flathub
         repo-url: https://mirrors.ustc.edu.cn/flathub
         install:
-          - org.mozilla.firefox                 # 火狐浏览器（中科大镜像直下，含全套解码器）
-          - org.gnome.Loupe                     # 现代图片查看器 Loupe
-          - org.localsend.localsend_app         # LocalSend 局域网传输
-          - org.gnome.Boxes                     # GNOME Boxes 虚拟机
-          - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
-          - org.onlyoffice.desktopeditors       # ONLYOFFICE 办公套件
+          - org.mozilla.firefox                     # 火狐浏览器（中科大镜像直下，含全套解码器）
+          - org.gnome.Loupe                         # 现代图片查看器 Loupe
+          - org.gnome.Papers                        # 现代 PDF 文档阅读器 Papers
+          - org.gnome.TextEditor                    # GNOME 轻量极速记事本
+          - org.gnome.Calculator                    # GNOME 桌面计算器
+          - io.github.celluloid_player.Celluloid    # Celluloid (MPV 内核) 全能视频播放器
+          - io.missioncenter.MissionCenter          # 任务中心 (Mission Center) 现代系统资源与 GPU 任务管理器
+          - com.github.tchx84.Flatseal              # Flatseal 容器沙盒权限可视化管理器
+          - org.localsend.localsend_app             # LocalSend 局域网传输
+          - org.gnome.Boxes                         # GNOME Boxes 虚拟机
+          - io.podman_desktop.PodmanDesktop         # Podman 容器桌面端
+          - org.onlyoffice.desktopeditors           # ONLYOFFICE 办公套件
 
   # 5. 容器镜像加密数字签名（必选）
   - type: signing

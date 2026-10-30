@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-# 1. 确保 LocalSend 渲染所需的回退中文字体到位
+# 1. 确保 Fcitx5 单雾凇配置与 LocalSend 渲染所需的回退中文字体第一时间到位
+/usr/bin/fcitx5-prestart-setup 2>/dev/null || true
 mkdir -p "$HOME/.local/share/fonts" "$HOME/.local/state"
 if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
     cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
@@ -40,9 +41,6 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
     fi
 
     exec >>"$HOME/.local/state/brew-setup.log" 2>&1
-
-    echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在触发 Rime 词库重新部署与编译..."
-    which fcitx5-remote >/dev/null 2>&1 && timeout 3s fcitx5-remote -r 2>/dev/null || true
 
     echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在检查 Homebrew 核心程序 (${BREW_BIN})..."
     count=0
