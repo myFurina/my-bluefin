@@ -26,6 +26,7 @@ mkdir -p /usr/lib/systemd/user/graphical-session.target.wants /usr/lib/systemd/u
 ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/graphical-session.target.wants/fcitx5.service
 ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/gnome-session.target.wants/fcitx5.service
 rm -f /usr/lib/systemd/user/gnome-session.target.wants/org.freedesktop.IBus.session.GNOME.service
+ln -sf /dev/null /usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.service
 rm -f /etc/xdg/Xwayland-session.d/10-ibus-x11 /usr/etc/xdg/Xwayland-session.d/10-ibus-x11
 ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
 ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.service /usr/lib/systemd/system/multi-user.target.wants/flatpak-ustc-mirror.service

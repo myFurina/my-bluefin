@@ -20,17 +20,19 @@ dnf install -y "${CLASH_RPM}"
 dnf clean all
 
 # ==============================================================================
-# 2. 动态解析并预装最新版 OpenCode V2 至 /usr/bin/opencode
+# 2. 动态解析并缓存最新版 OpenCode V2 至 /usr/share/ublue-os/my-brew/opencode
+#    （由首登脚本安装至用户可写目录 ~/.local/bin/opencode，支持本地随时升级或卸载）
 # ==============================================================================
-echo "==> 正在从 anomalyco/homebrew-tap 解析并预装最新版 OpenCode V2 至 /usr/bin/opencode..."
+echo "==> 正在从 anomalyco/homebrew-tap 解析并缓存最新版 OpenCode V2..."
 OPENCODE_URL=$(curl -sfSL https://raw.githubusercontent.com/anomalyco/homebrew-tap/HEAD/opencode-v2.rb | grep -Eo 'https://[^"]+opencode-linux-x64[^"]+\.tar\.gz' | head -n 1)
 if [ -n "${OPENCODE_URL}" ]; then
     echo "==> 下载 OpenCode V2: ${OPENCODE_URL}"
+    mkdir -p /usr/share/ublue-os/my-brew
     curl -sfSL "${OPENCODE_URL}" -o /tmp/opencode.tar.gz
-    tar -xzf /tmp/opencode.tar.gz -C /usr/bin opencode
-    chmod 755 /usr/bin/opencode
+    tar -xzf /tmp/opencode.tar.gz -C /usr/share/ublue-os/my-brew opencode
+    chmod 755 /usr/share/ublue-os/my-brew/opencode
     rm -f /tmp/opencode.tar.gz
-    echo "==> OpenCode V2 已成功打入 /usr/bin/opencode！"
+    echo "==> OpenCode V2 已成功缓存至 /usr/share/ublue-os/my-brew/opencode！"
 else
     echo "==> 错误: 未能解析到 OpenCode V2 下载地址"
     exit 1

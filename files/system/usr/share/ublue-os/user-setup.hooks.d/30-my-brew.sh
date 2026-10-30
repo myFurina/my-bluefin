@@ -8,10 +8,20 @@ if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/sh
 fi
 
 # 2. 确保 WezTerm 终端配置下发至用户目录，并默认关闭 Bluefin 终端欢迎横幅 (MOTD)
-mkdir -p "$HOME/.config/wezterm"
+mkdir -p "$HOME/.config/wezterm" "$HOME/.local/bin"
 touch "$HOME/.config/no-show-user-motd"
 if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
     cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
+fi
+
+# 2.5 托管 OpenCode V2 至用户可写目录 ~/.local/bin/opencode（首次自动部署，未卸载则随镜像自动更新，卸载后不反弹）
+if [ ! -f "$HOME/.config/opencode-initialized" ] && [ -f /usr/share/ublue-os/my-brew/opencode ]; then
+    cp -f /usr/share/ublue-os/my-brew/opencode "$HOME/.local/bin/opencode"
+    chmod 755 "$HOME/.local/bin/opencode"
+    touch "$HOME/.config/opencode-initialized"
+elif [ -f "$HOME/.local/bin/opencode" ] && [ -f /usr/share/ublue-os/my-brew/opencode ]; then
+    cp -u /usr/share/ublue-os/my-brew/opencode "$HOME/.local/bin/opencode"
+    chmod 755 "$HOME/.local/bin/opencode"
 fi
 
 # 3. 直接激活系统级预置的 Kimpanel 扩展（无需向用户目录重复拷贝副本）
