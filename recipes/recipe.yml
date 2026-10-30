@@ -1,14 +1,14 @@
 # yaml-language-server: $schema=https://schema.blue-build.org/recipe-v1.json
 name: my-bluefin
-description: 个人的全自动 Bluefin 纯净系统（Nvidia + 原生 Chrome/Firefox/VS Code/WezTerm/Clash/OpenCode + 雾凇拼音 + 纯国内源免代理初始化）
+description: 个人的全自动 Bluefin 纯净系统（Nvidia + 原生 Chrome/VS Code/WezTerm/Clash/OpenCode + 单雾凇常驻 + 纯国内源初始化）
 
 base-image: ghcr.io/ublue-os/bluefin-nvidia-open
 image-version: stable
 
 modules:
-  # 1. 原生系统级安装：
-  # - 从模板继承：COPR starship、micro 工具
-  # - 个人定制：原生 Firefox、Google Chrome、微软 VS Code、Cloudflare WARP、WezTerm、输入法核心（含 Qt6 与 Droid 字体）
+  # 1. 原生系统级安装与清理：
+  # - 从模板继承：COPR starship、micro 工具；移除原生 firefox（改用自带全套解码器的 Flatpak 沙盒版）
+  # - 个人定制：原生 Google Chrome（供 Antigravity 浏览器技能直接调用）、VS Code、Cloudflare WARP、WezTerm、输入法核心
   - type: dnf
     repos:
       files:
@@ -21,9 +21,7 @@ modules:
       packages:
         - micro                        # 【来自模板】现代易用终端编辑器 Micro
         - starship                     # 【来自模板】终端提示符 Starship
-        - firefox                      # 原生 Firefox 浏览器（开机即用，免等待）
-        - firefox-langpacks            # Firefox 中文语言包
-        - https://dl.google.com/linux/chrome/rpm/stable/x86_64/google-chrome-stable_current_x86_64.rpm # 原生 Google Chrome（自动触发 BlueBuild optfix 映射）
+        - https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm # 原生 Google Chrome（供反重力浏览器技能调用）
         - code                         # 原生 VS Code
         - cloudflare-warp              # Cloudflare WARP 客户端
         - wezterm                      # WezTerm Nightly
@@ -36,6 +34,10 @@ modules:
         - fcitx5-qt                    # Qt5 模块支持
         - fcitx5-qt6                   # Qt6 模块支持
         - fcitx5-configtool            # 图形化配置面板
+    remove:
+      packages:
+        - firefox                      # 【来自模板】移除原生火狐（改用 Flatpak 容器化沙盒版）
+        - firefox-langpacks
 
   # 2. 注入标准桌面安全策略（Polkit 规则）：放入 /usr/share 符合 ostree 纯净规范
   - type: script
@@ -57,7 +59,7 @@ modules:
         EOF
         chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules
 
-  # 3. 系统级植入 Cloudflare WARP 一键启停桌面图标，并彻底消除后台服务与首次登录 GUI 自启
+  # 3. 系统级植入 Cloudflare WARP 一键启停桌面图标，并从根源移除所有开机自启
   - type: script
     snippets:
       - |
@@ -72,7 +74,7 @@ modules:
         fi
         rm -f /etc/systemd/system/multi-user.target.wants/warp-svc.service
 
-        # 2. 彻底移除 /etc/xdg/autostart 下的全局自启项，杜绝第一次登录桌面时弹出 WARP 图形客户端
+        # 2. 彻底移除 /etc/xdg/autostart 下的全局自启项，杜绝登录桌面时弹出 WARP 图形客户端
         rm -f /etc/xdg/autostart/com.cloudflare.WarpTaskbar.desktop /etc/xdg/autostart/warp-taskbar.desktop
 
         # 3. 禁用 warp-svc、warp-taskbar 与 warp-desktop-svc 服务默认自启（走 /usr/lib 标准预设）
@@ -141,20 +143,70 @@ modules:
             exit 1
         fi
 
-  # 5. 固化现代 Wayland 输入法方案（纯 /usr 规范架构：内置雾凇拼音 + Kimpanel 官方扩展 + GSettings 厂商覆盖）
+  # 5. 固化现代 Wayland 输入法方案（纯 /usr 规范架构：单雾凇拼音常驻 + Kimpanel 扩展 + GSettings 厂商覆盖）
   - type: script
     snippets:
       - |
-        echo "==> 正在系统级配置 Fcitx5、雾凇拼音与 GNOME 响应通道（纯 /usr 架构）..."
+        echo "==> 正在系统级配置 Fcitx5、单雾凇拼音常驻与 GNOME 响应通道（纯 /usr 架构）..."
 
-        # 1. 注入 Fcitx5 基础环境变量（走 /usr/lib/environment.d，系统与用户会话标准路径，不碰 /etc）
+        # 1. 注入 Fcitx5 基础环境变量（走 /usr/lib/environment.d，系统与用户会话标准路径）
         mkdir -p /usr/lib/environment.d
         cat << 'EOF' > /usr/lib/environment.d/99-input-method.conf
         XMODIFIERS=@im=fcitx
         QT_IM_MODULE=fcitx
         EOF
 
-        # 2. 全局 systemd 用户服务：Fcitx5 进程守护
+        # 2. 系统级预置【雾凇拼音（Rime-ICE）】与【单 Rime 常驻配置模板】至 /usr/share/ublue-os
+        echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
+        mkdir -p /usr/share/ublue-os/rime-ice
+        git clone --depth 1 https://github.com/iDvel/rime-ice.git /tmp/rime-ice
+        cp -r /tmp/rime-ice/* /usr/share/ublue-os/rime-ice/
+        rm -rf /tmp/rime-ice
+
+        mkdir -p /usr/share/ublue-os/fcitx5-profile
+        # 仅保留 rime 单一输入法，消除外层 keyboard-us 割裂，全程仅用左 Shift 在雾凇内部切换中英文
+        cat << 'EOF' > /usr/share/ublue-os/fcitx5-profile/profile
+        [Groups/0]
+        Name=Default
+        Default Layout=us
+        DefaultIM=rime
+
+        [Groups/0/Items/0]
+        Name=rime
+        Layout=
+
+        [GroupOrder]
+        0=Default
+        EOF
+
+        cat << 'EOF' > /usr/share/ublue-os/fcitx5-profile/config
+        [Hotkey]
+        TriggerKeys=
+        EnumerateWithTriggerKeys=False
+
+        [Behavior]
+        ActiveByDefault=True
+        resetStateWhenFocusIn=No
+        ShareInputState=All
+        EOF
+
+        # 3. 编写 Fcitx5 启动前预置脚本（在 fcitx5 启动前完成配置与词库下发，杜绝内存回写覆盖竞态）
+        cat << 'EOF' > /usr/bin/fcitx5-prestart-setup
+        #!/usr/bin/env bash
+        mkdir -p "$HOME/.local/share/fcitx5/rime" "$HOME/.config/fcitx5"
+        if [ ! -f "$HOME/.local/share/fcitx5/rime/default.yaml" ] && [ -d /usr/share/ublue-os/rime-ice ]; then
+            cp -rn /usr/share/ublue-os/rime-ice/* "$HOME/.local/share/fcitx5/rime/"
+        fi
+        if [ ! -f "$HOME/.config/fcitx5/profile" ] && [ -f /usr/share/ublue-os/fcitx5-profile/profile ]; then
+            cp /usr/share/ublue-os/fcitx5-profile/profile "$HOME/.config/fcitx5/profile"
+        fi
+        if [ ! -f "$HOME/.config/fcitx5/config" ] && [ -f /usr/share/ublue-os/fcitx5-profile/config ]; then
+            cp /usr/share/ublue-os/fcitx5-profile/config "$HOME/.config/fcitx5/config"
+        fi
+        EOF
+        chmod 755 /usr/bin/fcitx5-prestart-setup
+
+        # 4. 全局 systemd 用户服务：Fcitx5 进程守护（通过 ExecStartPre 确保启动前配置已就位）
         mkdir -p /usr/lib/systemd/user/graphical-session.target.wants
         cat << 'EOF' > /usr/lib/systemd/user/fcitx5.service
         [Unit]
@@ -164,6 +216,7 @@ modules:
 
         [Service]
         Type=simple
+        ExecStartPre=/usr/bin/fcitx5-prestart-setup
         ExecStart=/usr/bin/fcitx5 --replace
         Restart=always
         RestartSec=2
@@ -174,7 +227,7 @@ modules:
         EOF
         ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/graphical-session.target.wants/fcitx5.service
 
-        # 3. GNOME 全局默认配置（走 GSettings 厂商覆盖机制 /usr/share/glib-2.0/schemas，杜绝 dconf update 污染 /etc）
+        # 5. GNOME 全局默认配置（走 GSettings 厂商覆盖机制 /usr/share/glib-2.0/schemas）
         mkdir -p /usr/share/glib-2.0/schemas
         cat << 'EOF' > /usr/share/glib-2.0/schemas/01_input_sources.gschema.override
         [org.gnome.desktop.input-sources]
@@ -188,7 +241,7 @@ modules:
         EOF
         glib-compile-schemas /usr/share/glib-2.0/schemas/
 
-        # 4. 从 GNOME 官方扩展中心获取匹配的 Kimpanel 官方扩展
+        # 6. 从 GNOME 官方扩展中心获取匹配的 Kimpanel 官方扩展并安装至系统扩展目录
         echo "==> 正在精准获取 GNOME 官方最新版 Kimpanel 扩展..."
         UUID="kimpanel@kde.org"
         VERSION_TAG=$(curl -sSL "https://extensions.gnome.org/extension-query/?search=${UUID}" | python3 -c '
@@ -209,51 +262,15 @@ modules:
             curl -sSL "https://extensions.gnome.org/download-extension/${UUID}.shell-extension.zip?version_tag=${VERSION_TAG}" -o /tmp/kimpanel.zip
             unzip -qo /tmp/kimpanel.zip -d /usr/share/gnome-shell/extensions/kimpanel@kde.org/
             rm -f /tmp/kimpanel.zip
-            # 扩展兼容性列表，覆盖 GNOME Shell 44~50，避免在新版 GNOME Shell 上被版本检查拦截
             sed -i 's/"shell-version": \[/"shell-version": ["44", "45", "46", "47", "48", "49", "50", /g' /usr/share/gnome-shell/extensions/kimpanel@kde.org/metadata.json 2>/dev/null || true
             chmod -R a+rX /usr/share/gnome-shell/extensions/kimpanel@kde.org/
             glib-compile-schemas /usr/share/gnome-shell/extensions/kimpanel@kde.org/schemas/ 2>/dev/null || true
-            echo "==> Kimpanel 官方扩展已成功解压并预置到 /usr/share/gnome-shell/extensions/kimpanel@kde.org"
+            echo "==> Kimpanel 官方扩展已成功预置到 /usr/share/gnome-shell/extensions/kimpanel@kde.org"
         else
             echo "==> 警告: 无法从 GNOME Extensions API 解析到版本 tag，跳过在线下载"
         fi
 
-        # 5. 系统级预置【雾凇拼音（Rime-ICE）】与出厂配置模板至 /usr/share/ublue-os
-        echo "==> 正在拉取官方最新的雾凇拼音（Rime-ICE）并打包到系统模板中..."
-        mkdir -p /usr/share/ublue-os/rime-ice
-        git clone --depth 1 https://github.com/iDvel/rime-ice.git /tmp/rime-ice
-        cp -r /tmp/rime-ice/* /usr/share/ublue-os/rime-ice/
-        rm -rf /tmp/rime-ice
-
-        mkdir -p /usr/share/ublue-os/fcitx5-profile
-        cat << 'EOF' > /usr/share/ublue-os/fcitx5-profile/profile
-        [Groups/0]
-        Name=Default
-        Default Layout=us
-        DefaultIM=rime
-
-        [Groups/0/Items/0]
-        Name=keyboard-us
-        Layout=
-
-        [Groups/0/Items/1]
-        Name=rime
-        Layout=
-
-        [GroupOrder]
-        0=Default
-        EOF
-
-        cat << 'EOF' > /usr/share/ublue-os/fcitx5-profile/gtkrc-2.0
-        gtk-im-module="fcitx"
-        EOF
-
-        cat << 'EOF' > /usr/share/ublue-os/fcitx5-profile/gtk3-settings.ini
-        [Settings]
-        gtk-im-module=fcitx
-        EOF
-
-        # 6. Tailscale 后台守护服务开机预设（走 /usr/lib/systemd/system-preset，不碰 /etc）与托盘服务
+        # 7. Tailscale 后台守护服务开机预设与托盘服务
         mkdir -p /usr/lib/systemd/system-preset
         echo "enable tailscaled.service" > /usr/lib/systemd/system-preset/50-tailscale.preset
 
@@ -276,7 +293,7 @@ modules:
         EOF
         ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
 
-  # 6. 全局配置 Flatpak 沙盒覆盖规则（走 /usr/share/ublue-os/flatpak-overrides + tmpfiles.d 挂载至 /var/lib/flatpak/overrides）
+  # 6. 全局配置 Flatpak 沙盒覆盖规则与中科大镜像源前置服务
   - type: script
     snippets:
       - |
@@ -298,17 +315,15 @@ modules:
         XMODIFIERS=@im=fcitx
         EOF
 
-        # 通过 systemd-tmpfiles 将 /usr/share 下的只读覆盖规则软链接至 Flatpak 实际读取的 /var/lib/flatpak/overrides
+        # 通过 systemd-tmpfiles 将只读覆盖规则软链接至 Flatpak 实际读取的 /var/lib/flatpak/overrides
         cat << 'EOF' > /usr/lib/tmpfiles.d/my-flatpak-overrides.conf
         d /var/lib/flatpak/overrides 0755 root root - -
         L+ /var/lib/flatpak/overrides/org.localsend.localsend_app - - - - /usr/share/ublue-os/flatpak-overrides/org.localsend.localsend_app
         L+ /var/lib/flatpak/overrides/global - - - - /usr/share/ublue-os/flatpak-overrides/global
         EOF
 
-        # 3. 创建系统级 Flatpak 前置自愈服务：在自动下载前强制将 Flathub 锁定为中科大高速镜像
-        mkdir -p /usr/lib/systemd/system /usr/lib/systemd/system-preset /usr/lib/systemd/system/multi-user.target.wants /usr/share/ublue-os
-        curl -sSL https://dl.flathub.org/repo/flathub.gpg -o /usr/share/ublue-os/flathub.gpg 2>/dev/null || true
-
+        # 3. 创建系统级 Flatpak 前置自愈服务：在自动下载前强制将系统 Flathub 锁定为中科大高速镜像
+        mkdir -p /usr/lib/systemd/system /usr/lib/systemd/system-preset /usr/lib/systemd/system/multi-user.target.wants
         cat << 'EOF' > /usr/lib/systemd/system/flatpak-ustc-mirror.service
         [Unit]
         Description=Configure System Flatpak USTC Mirror
@@ -327,24 +342,22 @@ modules:
         ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.service /usr/lib/systemd/system/multi-user.target.wants/flatpak-ustc-mirror.service
         echo "enable flatpak-ustc-mirror.service" > /usr/lib/systemd/system-preset/50-flatpak-mirror.preset
 
-  # 7. 必备 Flatpak 软件（100% 纯中科大镜像源托管软件，零境外 extra-data 阻塞）
+  # 7. 必备系统级 Flatpak 软件（100% 全部走中科大镜像源极速秒装，零境外请求）
   - type: default-flatpaks
     configurations:
       - scope: system
         notify: true
         repo-name: flathub
-        repo-url: https://mirrors.ustc.edu.cn/flathub    # Base URL，杜绝 /summary 404
+        repo-url: https://mirrors.ustc.edu.cn/flathub
         install:
+          - org.mozilla.firefox                 # 【来自模板】火狐浏览器（100% 中科大镜像直下，含全套解码器）
           - org.gnome.Loupe                     # 【来自模板】现代图片查看器 Loupe
           - org.localsend.localsend_app         # LocalSend 局域网传输
           - org.gnome.Boxes                     # GNOME Boxes 虚拟机
           - io.podman_desktop.PodmanDesktop     # Podman 容器桌面端
           - org.onlyoffice.desktopeditors       # ONLYOFFICE 办公套件
-      - scope: user
-        repo-name: flathub
-        repo-url: https://mirrors.ustc.edu.cn/flathub
 
-  # 8. 首次登录全自动装配（纯清华源 Homebrew + WezTerm 霓虹赛博配置 + 纯 /usr 钩子）
+  # 8. 首次登录全自动装配（纯清华源 Homebrew + WezTerm 霓虹赛博配置 + 极简首登钩子）
   - type: script
     snippets:
       - |
@@ -674,74 +687,27 @@ modules:
         return config
         EOF
 
-        # 4. 注入 Bluefin 官方首登执行脚本（从 /usr/share 优雅下发至用户主目录）
+        # 4. 注入 Bluefin 极简首登执行脚本（仅处理字体、WezTerm 配置、启用系统级 Kimpanel 与异步安装 Homebrew）
         mkdir -p /usr/share/ublue-os/user-setup.hooks.d
         cat << 'EOF' > /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
         #!/usr/bin/env bash
 
-        # 确保新用户基础目录健全（符合 XDG 规范）
-        mkdir -p "$HOME/.config" "$HOME/.local/share/fonts" "$HOME/.local/state" "$HOME/.config/autostart" "$HOME/.local/share/flatpak/overrides"
-
-        # 确保当前用户目录下具有 LocalSend 渲染所需的回退中文字体
+        # 1. 确保 LocalSend 渲染所需的回退中文字体到位
+        mkdir -p "$HOME/.local/share/fonts" "$HOME/.local/state"
         if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
             cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
         fi
 
-        # 同步下发用户级 Flatpak 权限覆盖规则（与系统级 /var/lib/flatpak/overrides 双重保障）
-        if [ -d /usr/share/ublue-os/flatpak-overrides ]; then
-            cp -rn /usr/share/ublue-os/flatpak-overrides/* "$HOME/.local/share/flatpak/overrides/" 2>/dev/null || true
-        fi
-
-        # 确保 WezTerm 终端配置自动下发至用户主目录
+        # 2. 确保 WezTerm 终端配置下发至用户目录
         mkdir -p "$HOME/.config/wezterm"
         if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
             cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
         fi
 
-        # 确保雾凇拼音 Rime 词库与配置自动下发至用户主目录
-        mkdir -p "$HOME/.local/share/fcitx5/rime" "$HOME/.config/fcitx5" "$HOME/.config/gtk-3.0"
-        if [ ! -f "$HOME/.local/share/fcitx5/rime/default.yaml" ] && [ -d /usr/share/ublue-os/rime-ice ]; then
-            cp -rn /usr/share/ublue-os/rime-ice/* "$HOME/.local/share/fcitx5/rime/"
-        fi
-        if [ ! -f "$HOME/.config/fcitx5/profile" ] && [ -f /usr/share/ublue-os/fcitx5-profile/profile ]; then
-            cp /usr/share/ublue-os/fcitx5-profile/profile "$HOME/.config/fcitx5/profile"
-        fi
-        if [ ! -f "$HOME/.gtkrc-2.0" ] && [ -f /usr/share/ublue-os/fcitx5-profile/gtkrc-2.0 ]; then
-            cp /usr/share/ublue-os/fcitx5-profile/gtkrc-2.0 "$HOME/.gtkrc-2.0"
-        fi
-        if [ ! -f "$HOME/.config/gtk-3.0/settings.ini" ] && [ -f /usr/share/ublue-os/fcitx5-profile/gtk3-settings.ini ]; then
-            cp /usr/share/ublue-os/fcitx5-profile/gtk3-settings.ini "$HOME/.config/gtk-3.0/settings.ini"
-        fi
-
-        # 确保禁用 Cloudflare WARP 开机自启动托盘（双重屏蔽：XDG Autostart 与 systemd user 单元）
-        mkdir -p "$HOME/.config/autostart"
-        cat << 'AUTOLOAD' > "$HOME/.config/autostart/com.cloudflare.WarpTaskbar.desktop"
-        [Desktop Entry]
-        Type=Application
-        Name=Cloudflare WARP
-        Hidden=true
-        AUTOLOAD
-        cp "$HOME/.config/autostart/com.cloudflare.WarpTaskbar.desktop" "$HOME/.config/autostart/warp-taskbar.desktop" 2>/dev/null || true
-
-        # 彻底停用并屏蔽用户级 systemd warp-taskbar 与 warp-desktop-svc 服务
-        which systemctl >/dev/null 2>&1 && systemctl --user disable --now warp-taskbar warp-desktop-svc 2>/dev/null || true
-        which systemctl >/dev/null 2>&1 && systemctl --user mask warp-taskbar warp-desktop-svc 2>/dev/null || true
-
-        # 确保解除 GNOME Shell 扩展版本限制并激活 Kimpanel
-        which gsettings >/dev/null 2>&1 && gsettings set org.gnome.shell disable-extension-version-validation true 2>/dev/null || true
-        if [ -d /usr/share/gnome-shell/extensions/kimpanel@kde.org ]; then
-            mkdir -p "$HOME/.local/share/gnome-shell/extensions/kimpanel@kde.org"
-            cp -rn /usr/share/gnome-shell/extensions/kimpanel@kde.org/* "$HOME/.local/share/gnome-shell/extensions/kimpanel@kde.org/" 2>/dev/null || true
-            chmod 644 "$HOME/.local/share/gnome-shell/extensions/kimpanel@kde.org/metadata.json" 2>/dev/null || true
-        fi
+        # 3. 直接激活系统级预置的 Kimpanel 扩展（无需向用户目录重复拷贝副本）
         which gnome-extensions >/dev/null 2>&1 && gnome-extensions enable kimpanel@kde.org 2>/dev/null || true
 
-        # 同步锁定用户级（--user）Flatpak 镜像为中科大源（导入 GPG 公钥，杜绝 public key not found）
-        flatpak remote-modify --user --gpg-import=/usr/share/ublue-os/flathub.gpg flathub 2>/dev/null || flatpak remote-modify --user --gpg-import=/etc/flatpak/remotes.d/flathub.gpg flathub 2>/dev/null || true
-        flatpak remote-add --user --if-not-exists flathub https://mirrors.ustc.edu.cn/flathub 2>/dev/null || true
-        flatpak remote-modify --user flathub --url=https://mirrors.ustc.edu.cn/flathub 2>/dev/null || true
-
-        # 确保 ~/.bashrc 中包含 Homebrew 环境变量
+        # 4. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量
         if ! grep -q "linuxbrew" "$HOME/.bashrc" 2>/dev/null; then
             cat << 'BREWENV' >> "$HOME/.bashrc"
         eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null)"
@@ -751,7 +717,7 @@ modules:
         BREWENV
         fi
 
-        # 幂等性检测：已安装完成则直接退出
+        # 5. 幂等性检测：Homebrew 依赖已安装完成则直接退出
         INSTALL_FLAG="$HOME/.config/user-brew-installed"
         [ -f "$INSTALL_FLAG" ] && exit 0
 
@@ -759,21 +725,17 @@ modules:
 
         # 异步在后台运行（配合 10-keep-background.conf 杜绝被 systemd 回收杀死）
         (
-            # 使用内存级 runtime 目录排他锁，关机或崩溃内核自动释放，绝不死锁
             LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/simon-brew.lock"
             exec 200>"$LOCK_FILE"
             if ! flock -n 200; then
                 exit 0
             fi
 
-            # 抢锁成功后再重定向日志，杜绝二次登录时截断正在写入的日志文件
             exec >>"$HOME/.local/state/brew-setup.log" 2>&1
 
-            # 初次启动触发 Rime 词库编译部署（设置 3 秒超时限制，防止 D-Bus 暂未就绪阻塞）
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在触发 Rime 词库重新部署与编译..."
             which fcitx5-remote >/dev/null 2>&1 && timeout 3s fcitx5-remote -r 2>/dev/null || true
 
-            # 等待 Bluefin 自带解压 Homebrew 完成（最多等 120 秒）
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在检查 Homebrew 核心程序 (${BREW_BIN})..."
             count=0
             while [ ! -x "${BREW_BIN}" ] && [ $count -lt 60 ]; do
@@ -787,20 +749,17 @@ modules:
             fi
 
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 检测到 Homebrew 已就绪，探测国内清华源连通性..."
-            # 国内网络探测（检测清华镜像连通性，避免 curl github.com 超时判死）
             net_count=0
             while ! curl -s --connect-timeout 2 https://mirrors.tuna.tsinghua.edu.cn > /dev/null && [ $net_count -lt 30 ]; do
                 sleep 2
                 net_count=$((net_count + 1))
             done
 
-            # 加载环境变量与国内清华 Bottle 镜像（禁止自动连 GitHub 更新）
             eval "$("${BREW_BIN}" shellenv)"
             export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
             export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
             export HOMEBREW_NO_AUTO_UPDATE=1
 
-            # 执行安装并通知桌面
             echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 开始执行 brew bundle 批量安装..."
             if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
                 touch "$INSTALL_FLAG"
