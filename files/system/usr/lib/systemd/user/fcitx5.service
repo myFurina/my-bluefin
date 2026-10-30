@@ -1,7 +1,8 @@
 [Unit]
 Description=Fcitx5 Input Method Framework
 PartOf=graphical-session.target
-After=graphical-session.target
+After=graphical-session.target gnome-session-initialized.target
+ConditionEnvironment=WAYLAND_DISPLAY
 
 [Service]
 Type=simple
@@ -12,4 +13,4 @@ RestartSec=2
 TimeoutStopSec=5
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=graphical-session.target gnome-session.target

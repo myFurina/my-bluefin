@@ -7,8 +7,9 @@ if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/sh
     cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
 fi
 
-# 2. 确保 WezTerm 终端配置下发至用户目录
+# 2. 确保 WezTerm 终端配置下发至用户目录，并默认关闭 Bluefin 终端欢迎横幅 (MOTD)
 mkdir -p "$HOME/.config/wezterm"
+touch "$HOME/.config/no-show-user-motd"
 if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
     cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
 fi

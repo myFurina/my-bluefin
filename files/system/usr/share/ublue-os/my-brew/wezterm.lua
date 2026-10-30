@@ -34,6 +34,8 @@ config.window_padding = {
 
 -- 走 XWayland (X11) 模式，彻底杜绝休眠唤醒后输入法焦点脱节问题
 config.enable_wayland = false
+config.use_ime = true
+config.xim_im_name = "fcitx"
 config.scrollback_lines = 10000
 
 -- ================= 顶部赛博霓虹标签栏 =================
