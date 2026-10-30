@@ -1,0 +1,12 @@
+[Unit]
+Description=Configure System Flatpak USTC Mirror
+Before=system-flatpak-setup.service
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '/usr/bin/flatpak remote-modify --system flathub --url=https://mirrors.ustc.edu.cn/flathub 2>/dev/null || true'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

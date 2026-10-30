@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=退出 Cloudflare WARP
+Comment=一键彻底关闭 Cloudflare WARP 客户端及后台服务
+Exec=sh -c "pkill -f warp-taskbar 2>/dev/null; pkill -f warp-desktop-svc 2>/dev/null; systemctl stop warp-svc; notify-send 'Cloudflare WARP' '已彻底退出并停止服务'"
+Icon=application-exit
+Terminal=false
+Categories=Network;
+Keywords=warp;cloudflare;stop;exit;quit;

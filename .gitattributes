@@ -1,0 +1,3 @@
+# Force LF line endings for all text files in the repository
+# Ensures Linux shell scripts, systemd units, and configs never get CRLF when edited on Windows
+* text=auto eol=lf

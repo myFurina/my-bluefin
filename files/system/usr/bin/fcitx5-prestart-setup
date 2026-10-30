@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+mkdir -p "$HOME/.local/share/fcitx5/rime" "$HOME/.config/fcitx5"
+if [ ! -f "$HOME/.local/share/fcitx5/rime/default.yaml" ] && [ -d /usr/share/ublue-os/rime-ice ]; then
+    cp -rn /usr/share/ublue-os/rime-ice/* "$HOME/.local/share/fcitx5/rime/"
+fi
+if [ ! -f "$HOME/.config/fcitx5/profile" ] && [ -f /usr/share/ublue-os/fcitx5-profile/profile ]; then
+    cp /usr/share/ublue-os/fcitx5-profile/profile "$HOME/.config/fcitx5/profile"
+fi
+if [ ! -f "$HOME/.config/fcitx5/config" ] && [ -f /usr/share/ublue-os/fcitx5-profile/config ]; then
+    cp /usr/share/ublue-os/fcitx5-profile/config "$HOME/.config/fcitx5/config"
+fi

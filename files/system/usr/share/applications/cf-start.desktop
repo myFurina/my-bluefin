@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=启动 Cloudflare WARP
+Comment=一键启动 Cloudflare WARP 服务及客户端
+Exec=sh -c "systemctl start warp-svc; nohup warp-taskbar >/dev/null 2>&1 & notify-send 'Cloudflare WARP' '后台服务与客户端已启动'"
+Icon=zero-trust-orange
+Terminal=false
+Categories=Network;
+Keywords=warp;cloudflare;start;

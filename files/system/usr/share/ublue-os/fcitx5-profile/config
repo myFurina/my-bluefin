@@ -1,0 +1,8 @@
+[Hotkey]
+TriggerKeys=
+EnumerateWithTriggerKeys=False
+
+[Behavior]
+ActiveByDefault=True
+resetStateWhenFocusIn=No
+ShareInputState=All

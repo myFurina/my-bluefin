@@ -1,0 +1,5 @@
+[Context]
+filesystems=xdg-config/fcitx5:ro;
+
+[Environment]
+XMODIFIERS=@im=fcitx

@@ -1,0 +1,2 @@
+disable warp-taskbar.service
+disable warp-desktop-svc.service
