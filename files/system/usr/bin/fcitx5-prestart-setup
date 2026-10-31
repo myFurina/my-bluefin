@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-mkdir -p "$HOME/.local/share/fcitx5/rime" "$HOME/.config/fcitx5"
+# 仅对普通真实用户 (UID >= 1000) 执行，跳过 gdm 登录界面等系统虚拟用户
+[ "$(id -u)" -lt 1000 ] && exit 0
+
+mkdir -p "$HOME/.local/share/fcitx5/rime" "$HOME/.config/fcitx5/conf"
 if [ ! -f "$HOME/.local/share/fcitx5/rime/default.yaml" ] && [ -d /usr/share/ublue-os/rime-ice ]; then
     cp -rn /usr/share/ublue-os/rime-ice/* "$HOME/.local/share/fcitx5/rime/"
 fi
@@ -8,4 +11,7 @@ if [ ! -f "$HOME/.config/fcitx5/profile" ] && [ -f /usr/share/ublue-os/fcitx5-pr
 fi
 if [ ! -f "$HOME/.config/fcitx5/config" ] && [ -f /usr/share/ublue-os/fcitx5-profile/config ]; then
     cp /usr/share/ublue-os/fcitx5-profile/config "$HOME/.config/fcitx5/config"
+fi
+if [ ! -f "$HOME/.config/fcitx5/conf/notifications.conf" ] && [ -f /usr/share/ublue-os/fcitx5-profile/conf/notifications.conf ]; then
+    cp /usr/share/ublue-os/fcitx5-profile/conf/notifications.conf "$HOME/.config/fcitx5/conf/notifications.conf"
 fi

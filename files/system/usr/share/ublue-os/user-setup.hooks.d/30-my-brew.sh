@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# 0. 仅对普通真实用户 (UID >= 1000) 执行，跳过 gdm 登录界面等系统虚拟用户
+[ "$(id -u)" -lt 1000 ] && exit 0
+
 # 1. 确保 Fcitx5 单雾凇配置与 LocalSend 渲染所需的回退中文字体第一时间到位
 /usr/bin/fcitx5-prestart-setup 2>/dev/null || true
 mkdir -p "$HOME/.local/share/fonts" "$HOME/.local/state"
