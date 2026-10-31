@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Antigravity
+GenericName=AI-First IDE
+Comment=Antigravity - Advanced Agentic Development Platform
+Exec=/usr/bin/env HTTP_PROXY=http://127.0.0.1:7897 HTTPS_PROXY=http://127.0.0.1:7897 http_proxy=http://127.0.0.1:7897 https_proxy=http://127.0.0.1:7897 NO_PROXY=localhost,127.0.0.1,::1,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 no_proxy=localhost,127.0.0.1,::1,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 NODE_USE_ENV_PROXY=1 GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=http.proxy GIT_CONFIG_VALUE_0=http://127.0.0.1:7897 GIT_CONFIG_KEY_1=https.proxy GIT_CONFIG_VALUE_1=http://127.0.0.1:7897 /usr/bin/antigravity --ozone-platform-hint=auto %U
+Icon=antigravity
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=true
+StartupWMClass=antigravity
+MimeType=text/plain;inode/directory;

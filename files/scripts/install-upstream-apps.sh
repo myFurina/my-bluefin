@@ -77,3 +77,35 @@ if [ -n "${VERSION_TAG}" ]; then
 else
     echo "==> 警告: 无法从 GNOME Extensions API 解析到版本 tag，跳过在线下载"
 fi
+
+# ==============================================================================
+# 5. 动态解析并安装最新版 Google Antigravity IDE (Linux x64)
+# ==============================================================================
+echo "==> 正在精准解析 Google 官方最新版 Antigravity IDE..."
+# 优先从官网下载页动态抓取最新的更新接口，若异常则回落至默认已知接口
+UPDATER_API=$(curl -sfSL "https://antigravity.google/download" | grep -Eo 'https://[a-zA-Z0-9.-]+\.run\.app/releases' | head -n 1)
+UPDATER_API="${UPDATER_API:-https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/releases}"
+
+RELEASE_INFO=$(curl -sfSL "${UPDATER_API}" | python3 -c '
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    latest = data[0]
+    print(f"{latest[\"version\"]}-{latest[\"execution_id\"]}")
+except Exception:
+    pass
+' 2>/dev/null || true)
+
+if [ -n "${RELEASE_INFO}" ]; then
+    DOWNLOAD_URL="https://storage.googleapis.com/antigravity-public/antigravity-hub/${RELEASE_INFO}/linux-x64/Antigravity.tar.gz"
+    echo "==> 检测到最新版本 [${RELEASE_INFO}]，开始下载并安装至 /opt/antigravity: ${DOWNLOAD_URL}"
+    mkdir -p /opt/antigravity
+    curl -sfSL "${DOWNLOAD_URL}" -o /tmp/Antigravity.tar.gz
+    tar -xzf /tmp/Antigravity.tar.gz -C /opt/antigravity --strip-components=1
+    rm -f /tmp/Antigravity.tar.gz
+    ln -sf /opt/antigravity/antigravity /usr/bin/antigravity
+    chmod 755 /usr/bin/antigravity
+    echo "==> Antigravity IDE [${RELEASE_INFO}] 已成功部署至 /opt/antigravity 并软链至 /usr/bin/antigravity！"
+else
+    echo "==> 警告: 无法解析 Antigravity 最新发布版本，跳过在线下载"
+fi

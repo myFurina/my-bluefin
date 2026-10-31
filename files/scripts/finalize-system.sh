@@ -30,6 +30,7 @@ ln -sf /dev/null /usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.servic
 rm -f /etc/xdg/Xwayland-session.d/10-ibus-x11 /usr/etc/xdg/Xwayland-session.d/10-ibus-x11
 ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
 ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.service /usr/lib/systemd/system/multi-user.target.wants/flatpak-ustc-mirror.service
+systemctl enable libvirtd.service 2>/dev/null || true
 
 glib-compile-schemas /usr/share/glib-2.0/schemas/
 
@@ -44,4 +45,19 @@ if [ -d /usr/etc ]; then
     echo "==> /usr/etc 已成功彻底移除！"
 else
     echo "==> 良好: 镜像中未发现 /usr/etc 目录。"
+fi
+
+# ==============================================================================
+# 4. 固化 Flathub 官方 CDN 优质直连 IP（加速 AppStream 302 重定向下载，彻底杜绝不开代理时卡死）
+# ==============================================================================
+echo "==> 正在为 /etc/hosts 配置 Flathub CDN 优质直连 IP 映射..."
+if ! grep -q "dl.flathub.org" /etc/hosts 2>/dev/null; then
+    cat << 'HOSTS' >> /etc/hosts
+
+# Flathub 官方 CDN 优质 Anycast 直连节点（加速 AppStream 元数据下载）
+151.101.2.217 dl.flathub.org
+151.101.66.217 dl.flathub.org
+151.101.130.217 dl.flathub.org
+151.101.194.217 dl.flathub.org
+HOSTS
 fi
