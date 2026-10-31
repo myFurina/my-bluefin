@@ -18,11 +18,11 @@ rm -f /etc/xdg/autostart/com.cloudflare.WarpTaskbar.desktop /etc/xdg/autostart/w
 # 2. 修正静态文件权限与建立 systemd 服务软链接
 # ==============================================================================
 echo "==> 正在校准系统脚本权限、建立服务软链接并编译 GSettings Schema..."
-chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules
+chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules /usr/share/polkit-1/rules.d/50-libvirt-nopasswd.rules
 chmod 755 /usr/bin/fcitx5-prestart-setup
 chmod 755 /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
 
-mkdir -p /usr/lib/systemd/user/graphical-session.target.wants /usr/lib/systemd/user/gnome-session.target.wants /usr/lib/systemd/system/multi-user.target.wants
+mkdir -p /usr/lib/systemd/user/graphical-session.target.wants /usr/lib/systemd/user/gnome-session.target.wants /usr/lib/systemd/system/multi-user.target.wants /usr/lib/systemd/system/sockets.target.wants
 ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/graphical-session.target.wants/fcitx5.service
 ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/gnome-session.target.wants/fcitx5.service
 rm -f /usr/lib/systemd/user/gnome-session.target.wants/org.freedesktop.IBus.session.GNOME.service
@@ -30,7 +30,7 @@ ln -sf /dev/null /usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.servic
 rm -f /etc/xdg/Xwayland-session.d/10-ibus-x11 /usr/etc/xdg/Xwayland-session.d/10-ibus-x11
 ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
 ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.service /usr/lib/systemd/system/multi-user.target.wants/flatpak-ustc-mirror.service
-systemctl enable libvirtd.service 2>/dev/null || true
+systemctl enable libvirtd.service virtqemud.socket virtnetworkd.socket virtstoraged.socket 2>/dev/null || true
 
 glib-compile-schemas /usr/share/glib-2.0/schemas/
 
@@ -45,19 +45,4 @@ if [ -d /usr/etc ]; then
     echo "==> /usr/etc 已成功彻底移除！"
 else
     echo "==> 良好: 镜像中未发现 /usr/etc 目录。"
-fi
-
-# ==============================================================================
-# 4. 固化 Flathub 官方 CDN 优质直连 IP（加速 AppStream 302 重定向下载，彻底杜绝不开代理时卡死）
-# ==============================================================================
-echo "==> 正在为 /etc/hosts 配置 Flathub CDN 优质直连 IP 映射..."
-if ! grep -q "dl.flathub.org" /etc/hosts 2>/dev/null; then
-    cat << 'HOSTS' >> /etc/hosts
-
-# Flathub 官方 CDN 优质 Anycast 直连节点（加速 AppStream 元数据下载）
-151.101.2.217 dl.flathub.org
-151.101.66.217 dl.flathub.org
-151.101.130.217 dl.flathub.org
-151.101.194.217 dl.flathub.org
-HOSTS
 fi

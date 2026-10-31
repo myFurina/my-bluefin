@@ -33,7 +33,9 @@ modules:
         - fcitx5-qt6                   # Qt6 模块支持
         - fcitx5-configtool            # 图形化配置面板
         - virt-manager                          # 原生虚拟机图形管理器（无沙盒限制）
+        - qemu-kvm                              # QEMU/KVM 硬件虚拟化核心模拟器
         - libvirt-daemon-kvm                    # 原生 KVM 虚拟化核心守护进程
+        - libvirt-daemon-config-network         # 提供开箱即用的 default NAT 虚拟网络 (virbr0)
         - libvirt-client                        # virsh 等客户端管理工具
         - virtiofsd                             # 原生 Virtio-FS 共享内存守护进程（内存级极速共享）
         - edk2-ovmf                             # 原生 UEFI OVMF 固件
