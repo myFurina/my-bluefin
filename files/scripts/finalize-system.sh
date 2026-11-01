@@ -20,6 +20,7 @@ rm -f /etc/xdg/autostart/com.cloudflare.WarpTaskbar.desktop /etc/xdg/autostart/w
 echo "==> 正在校准系统脚本权限、建立服务软链接并编译 GSettings Schema..."
 chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules /usr/share/polkit-1/rules.d/50-libvirt-nopasswd.rules
 chmod 755 /usr/bin/fcitx5-prestart-setup /usr/bin/optimize-flathub
+ln -sf /usr/bin/optimize-flathub /usr/bin/optimize-network
 chmod 755 /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
 
 mkdir -p /usr/lib/systemd/user/graphical-session.target.wants /usr/lib/systemd/user/gnome-session.target.wants /usr/lib/systemd/system/multi-user.target.wants /usr/lib/systemd/system/sockets.target.wants

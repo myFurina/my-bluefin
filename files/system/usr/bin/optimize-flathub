@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Flathub 智能动态优选与自适应熔断镜像工具
-1. 通过国内权威 DoH 动态获取 dl.flathub.org 最新的官方解析 IP。
-2. 结合预置的优质亚太/东京 Anycast 节点池进行真实 TLS 握手测试（严格校验 SAN 包含 dl.flathub.org）。
-3. 选出延迟最低、证书合法的最优 IP 写入 /etc/hosts。
-4. 若全部节点超时或不可达，则自动清除 /etc/hosts 残留记录，确保回退至系统原生 DNS 解析（宁缺毋滥）。
-5. 智能自适应更新：
+网络智能动态优选与自适应镜像加速工具 (Flathub + GitHub 全套加速)
+1. 通过国内权威 DoH 动态获取最新官方 A 记录，并融合亚太高带宽 Anycast 优质节点池。
+2. 使用并发线程池对每个域名和 IP 进行严格的真实 TLS 证书验真（SAN 匹配）与延迟测量，杜绝证书报错。
+3. 优选最优 IP 安全写入 /etc/hosts；若某域名无可用节点则自动清理残留（宁缺毋滥）。
+4. Flatpak 智能自适应更新：
    - 优先尝试官方增量省流量模式 (--use-deltas)；
    - 启动 15 秒看门狗计时器：15 秒内顺利完成则继续保持省流量；
    - 若超过 15 秒卡死，自动触发熔断降级为 --no-use-deltas，切换为单包高速完成。
 """
 
+import concurrent.futures
 import json
 import os
 import re
@@ -20,32 +20,69 @@ import subprocess
 import time
 import urllib.request
 
-HOST_NAME = "dl.flathub.org"
 HOSTS_FILE = "/etc/hosts"
 APPSTREAM_TIMEOUT_SEC = 15
 
-# 预置亚太/东京高带宽 Anycast 节点池 (带 dl.flathub.org 专属证书)
-CANDIDATE_POOL = [
-    "151.101.129.91",
-    "151.101.65.91",
-    "151.101.1.91",
-    "151.101.193.91",
-    "199.232.161.91",
-    "146.75.113.91",
-]
+# 优化加速的核心域名及其专属 Anycast 候选节点池
+DOMAINS = {
+    "dl.flathub.org": [
+        "151.101.129.91",
+        "151.101.65.91",
+        "151.101.1.91",
+        "151.101.193.91",
+        "199.232.161.91",
+        "146.75.113.91",
+    ],
+    "raw.githubusercontent.com": [
+        "151.101.128.133",
+        "151.101.64.133",
+        "151.101.0.133",
+        "151.101.192.133",
+        "185.199.108.133",
+        "185.199.109.133",
+        "185.199.110.133",
+        "185.199.111.133",
+    ],
+    "github.githubassets.com": [
+        "185.199.108.154",
+        "185.199.109.154",
+        "185.199.110.154",
+        "185.199.111.154",
+        "151.101.128.133",
+    ],
+    "objects.githubusercontent.com": [
+        "185.199.108.133",
+        "185.199.109.133",
+        "185.199.110.133",
+        "185.199.111.133",
+    ],
+    "github.com": [
+        "20.27.177.113",
+        "20.205.243.166",
+        "140.82.112.4",
+        "140.82.114.4",
+        "140.82.121.4",
+    ],
+    "codeload.github.com": [
+        "20.205.243.165",
+        "140.82.112.10",
+        "140.82.114.10",
+        "140.82.121.10",
+    ],
+}
 
 
-def fetch_doh_ips():
+def fetch_doh_ips(domain):
     """通过国内高可用 DoH 实时解析官方最新 A 记录"""
     doh_urls = [
-        "https://dns.alidns.com/resolve?name=dl.flathub.org&type=A",
-        "https://doh.pub/dns-query?name=dl.flathub.org&type=A",
+        f"https://dns.alidns.com/resolve?name={domain}&type=A",
+        f"https://doh.pub/dns-query?name={domain}&type=A",
     ]
     ips = []
     for url in doh_urls:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
-            with urllib.request.urlopen(req, timeout=2.0) as resp:
+            with urllib.request.urlopen(req, timeout=1.8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for ans in data.get("Answer", []):
                     if ans.get("type") == 1 and ans.get("data"):
@@ -57,57 +94,77 @@ def fetch_doh_ips():
     return ips
 
 
-def verify_ip(ip, timeout=2.0):
+def verify_ip(domain, ip, timeout=1.8):
     """验证 IP 的真实 TLS 证书有效性并测量延迟"""
     start = time.time()
     try:
         ctx = ssl.create_default_context()
         with socket.create_connection((ip, 443), timeout=timeout) as sock:
-            with ctx.wrap_socket(sock, server_hostname=HOST_NAME) as ssock:
+            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
                 cert = ssock.getpeercert()
                 latency = int((time.time() - start) * 1000)
                 sans = [v for k, v in cert.get("subjectAltName", []) if k == "DNS"]
-                if HOST_NAME in sans or "*.flathub.org" in sans:
-                    return latency
+                matched = any(
+                    s == domain or (s.startswith("*.") and domain.endswith(s[1:]))
+                    for s in sans
+                )
+                if matched:
+                    return (domain, ip, latency)
     except Exception:
         pass
-    return None
+    return (domain, ip, None)
 
 
-def update_hosts(best_ip):
-    """安全更新 /etc/hosts，若无最优 IP 则彻底清理残留"""
+def update_hosts(results):
+    """安全原子更新 /etc/hosts"""
+    target_domains = set(DOMAINS.keys())
+    for domain in sorted(target_domains):
+        if domain in results:
+            ip, lat = results[domain]
+            print(f"  [优选成功] {domain:<30} -> {ip:<16} ({lat}ms)")
+        else:
+            print(f"  [原生回退] {domain:<30} (无有效直连节点，保持原生解析)")
+
+    if os.geteuid() != 0:
+        print("==> [提示] 当前以普通用户运行，跳过写入 /etc/hosts（开机服务或使用 sudo 时将自动生效）")
+        return
+
     try:
         with open(HOSTS_FILE, "r", encoding="utf-8") as f:
             lines = f.readlines()
     except Exception:
         lines = []
 
-    # 过滤掉所有涉及 dl.flathub.org 的历史条目
     new_lines = [
         line
         for line in lines
-        if HOST_NAME not in line and "Flathub Dynamic IP" not in line
+        if not any(d in line for d in target_domains)
+        and "Dynamic Optimized IP" not in line
+        and "Flathub Dynamic IP" not in line
     ]
 
-    if best_ip:
-        new_lines.append(f"{best_ip} {HOST_NAME} # Flathub Dynamic IP\n")
-        print(f"==> 已将最优 IP ({best_ip}) 写入 {HOSTS_FILE}")
-    else:
-        print(f"==> 无可用优选 IP，已清理 {HOSTS_FILE} 中的劫持记录，回退原生 DNS")
+    for domain in sorted(target_domains):
+        if domain in results:
+            ip, lat = results[domain]
+            new_lines.append(f"{ip:<16} {domain} # Dynamic Optimized IP ({lat}ms)\n")
 
     try:
         with open(HOSTS_FILE, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
+        print(f"==> 成功将最优网络节点写入 {HOSTS_FILE}")
     except Exception as e:
         print(f"警告: 无法写入 {HOSTS_FILE}: {e}")
 
 
 def configure_flatpak_adaptive():
     """智能自适应更新 Flatpak 软件源配置"""
+    if os.geteuid() != 0:
+        print("==> [提示] 当前以普通用户运行，跳过系统级 Flatpak 源配置（开机服务或使用 sudo 时将自动生效）")
+        return
+
     if not os.path.exists("/usr/bin/flatpak"):
         return
 
-    # 检查系统级 flathub 源是否存在
     res = subprocess.run(
         ["/usr/bin/flatpak", "remotes", "--system"],
         stdout=subprocess.PIPE,
@@ -145,7 +202,6 @@ def configure_flatpak_adaptive():
     print("==> 优先尝试省流量增量模式 (--use-deltas) 刷新 AppStream 元数据...")
 
     try:
-        # 3. 启动看门狗限时刷新 (15 秒超时)
         refresh_res = subprocess.run(
             ["/usr/bin/flatpak", "update", "--appstream", "--system", "--noninteractive"],
             stdout=subprocess.PIPE,
@@ -159,7 +215,7 @@ def configure_flatpak_adaptive():
     except subprocess.TimeoutExpired:
         print(f"⏱️ [触发熔断] AppStream 增量刷新超过 {APPSTREAM_TIMEOUT_SEC} 秒未完成，判定网络卡顿！")
 
-    # 4. 熔断降级分支：切换为 --no-use-deltas 单包极速下载
+    # 3. 熔断降级分支：切换为 --no-use-deltas 单包极速下载
     print("==> 正在自适应降级：切换为快速模式 (--no-use-deltas)...")
     subprocess.run(
         [
@@ -173,7 +229,6 @@ def configure_flatpak_adaptive():
         stderr=subprocess.DEVNULL,
     )
 
-    # 再次刷新以单包拉取
     try:
         subprocess.run(
             ["/usr/bin/flatpak", "update", "--appstream", "--system", "--noninteractive"],
@@ -187,27 +242,24 @@ def configure_flatpak_adaptive():
 
 
 def main():
-    print("==> 正在探测 Flathub CDN 最佳接入节点...")
-    raw_ips = fetch_doh_ips() + CANDIDATE_POOL
-    ips_to_test = list(dict.fromkeys(raw_ips))
+    print("==> 正在并发探测 Flathub 与 GitHub 最佳接入节点...")
+    tasks = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+        for domain, default_ips in DOMAINS.items():
+            doh_ips = fetch_doh_ips(domain)
+            candidate_ips = list(dict.fromkeys(doh_ips + default_ips))
+            for ip in candidate_ips:
+                tasks.append(executor.submit(verify_ip, domain, ip))
 
-    best_ip = None
-    best_latency = 999999
-
-    for ip in ips_to_test:
-        lat = verify_ip(ip)
+    results = {}
+    for future in concurrent.futures.as_completed(tasks):
+        domain, ip, lat = future.result()
         if lat is not None:
-            print(f"  [有效节点] {ip:<16} 延迟: {lat}ms")
-            if lat < best_latency:
-                best_latency = lat
-                best_ip = ip
+            if domain not in results or lat < results[domain][1]:
+                results[domain] = (ip, lat)
 
-    if best_ip:
-        print(f"==> 探测完成，选中最佳节点: {best_ip} (延迟: {best_latency}ms)")
-    else:
-        print("==> 警告: 所有候选节点均无法通过 TLS 握手验证")
-
-    update_hosts(best_ip)
+    print("==> 探测完成，正在处理系统路由与配置...")
+    update_hosts(results)
     configure_flatpak_adaptive()
 
 
