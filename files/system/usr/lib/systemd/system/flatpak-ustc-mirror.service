@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/bin/optimize-flathub
 RemainAfterExit=yes
-TimeoutSec=20
+TimeoutSec=45
 
 [Install]
 WantedBy=multi-user.target

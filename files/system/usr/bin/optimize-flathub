@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Flathub 智能动态优选与镜像配置工具
+Flathub 智能动态优选与自适应熔断镜像工具
 1. 通过国内权威 DoH 动态获取 dl.flathub.org 最新的官方解析 IP。
-2. 结合预置的优质亚太/东京 Anycast 节点池进行真实 TLS 握手测试（校验 SAN 包含 dl.flathub.org）。
+2. 结合预置的优质亚太/东京 Anycast 节点池进行真实 TLS 握手测试（严格校验 SAN 包含 dl.flathub.org）。
 3. 选出延迟最低、证书合法的最优 IP 写入 /etc/hosts。
 4. 若全部节点超时或不可达，则自动清除 /etc/hosts 残留记录，确保回退至系统原生 DNS 解析（宁缺毋滥）。
-5. 自动配置 Flatpak 软件源：应用中科大镜像并开启 --no-use-deltas 杜绝 AppStream 卡顿。
+5. 智能自适应更新：
+   - 优先尝试官方增量省流量模式 (--use-deltas)；
+   - 启动 15 秒看门狗计时器：15 秒内顺利完成则继续保持省流量；
+   - 若超过 15 秒卡死，自动触发熔断降级为 --no-use-deltas，切换为单包高速完成。
 """
 
 import json
@@ -19,6 +22,7 @@ import urllib.request
 
 HOST_NAME = "dl.flathub.org"
 HOSTS_FILE = "/etc/hosts"
+APPSTREAM_TIMEOUT_SEC = 15
 
 # 预置亚太/东京高带宽 Anycast 节点池 (带 dl.flathub.org 专属证书)
 CANDIDATE_POOL = [
@@ -98,48 +102,93 @@ def update_hosts(best_ip):
         print(f"警告: 无法写入 {HOSTS_FILE}: {e}")
 
 
-def configure_flatpak():
-    """配置 Flatpak 软件源以提升稳定性"""
+def configure_flatpak_adaptive():
+    """智能自适应更新 Flatpak 软件源配置"""
     if not os.path.exists("/usr/bin/flatpak"):
         return
 
-    # 若系统级 flathub 源存在，修改其 URL 并关闭 deltas 差异下载
+    # 检查系统级 flathub 源是否存在
     res = subprocess.run(
         ["/usr/bin/flatpak", "remotes", "--system"],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
     )
-    if "flathub" in res.stdout:
+    if "flathub" not in res.stdout:
+        return
+
+    # 1. 确保软件源地址指向中科大镜像
+    subprocess.run(
+        [
+            "/usr/bin/flatpak",
+            "remote-modify",
+            "--system",
+            "flathub",
+            "--url=https://mirrors.ustc.edu.cn/flathub",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # 2. 默认优先尝试官方增量省流量模式 (--use-deltas)
+    subprocess.run(
+        [
+            "/usr/bin/flatpak",
+            "remote-modify",
+            "--system",
+            "flathub",
+            "--use-deltas",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print("==> 优先尝试省流量增量模式 (--use-deltas) 刷新 AppStream 元数据...")
+
+    try:
+        # 3. 启动看门狗限时刷新 (15 秒超时)
+        refresh_res = subprocess.run(
+            ["/usr/bin/flatpak", "update", "--appstream", "--system", "--noninteractive"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=APPSTREAM_TIMEOUT_SEC,
+            text=True,
+        )
+        if refresh_res.returncode == 0:
+            print(f"🎉 [顺利完成] AppStream 在 {APPSTREAM_TIMEOUT_SEC} 秒内刷新成功，保持省流量模式 (--use-deltas)！")
+            return
+    except subprocess.TimeoutExpired:
+        print(f"⏱️ [触发熔断] AppStream 增量刷新超过 {APPSTREAM_TIMEOUT_SEC} 秒未完成，判定网络卡顿！")
+
+    # 4. 熔断降级分支：切换为 --no-use-deltas 单包极速下载
+    print("==> 正在自适应降级：切换为快速模式 (--no-use-deltas)...")
+    subprocess.run(
+        [
+            "/usr/bin/flatpak",
+            "remote-modify",
+            "--system",
+            "flathub",
+            "--no-use-deltas",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    # 再次刷新以单包拉取
+    try:
         subprocess.run(
-            [
-                "/usr/bin/flatpak",
-                "remote-modify",
-                "--system",
-                "flathub",
-                "--url=https://mirrors.ustc.edu.cn/flathub",
-            ],
+            ["/usr/bin/flatpak", "update", "--appstream", "--system", "--noninteractive"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=20,
         )
-        subprocess.run(
-            [
-                "/usr/bin/flatpak",
-                "remote-modify",
-                "--system",
-                "flathub",
-                "--no-use-deltas",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print("==> Flatpak flathub 源已设置为中科大镜像并禁用 deltas")
+        print("==> 已通过快速模式 (--no-use-deltas) 成功更新元数据！")
+    except Exception:
+        pass
 
 
 def main():
     print("==> 正在探测 Flathub CDN 最佳接入节点...")
     raw_ips = fetch_doh_ips() + CANDIDATE_POOL
-    # 保持顺序去重
     ips_to_test = list(dict.fromkeys(raw_ips))
 
     best_ip = None
@@ -159,7 +208,7 @@ def main():
         print("==> 警告: 所有候选节点均无法通过 TLS 握手验证")
 
     update_hosts(best_ip)
-    configure_flatpak()
+    configure_flatpak_adaptive()
 
 
 if __name__ == "__main__":
