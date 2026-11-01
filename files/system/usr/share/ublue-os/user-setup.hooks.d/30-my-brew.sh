@@ -67,7 +67,6 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
 
     if [ ! -x "${BREW_BIN}" ]; then
         echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 错误: 超时未能检测到可执行的 Homebrew: ${BREW_BIN}"
-        which notify-send >/dev/null 2>&1 && notify-send -u critical -i dialog-error -a "系统初始化" "Homebrew 初始化失败" "未找到 Homebrew 核心程序，详情见 ~/.local/state/brew-setup.log" 2>/dev/null || true
         exit 0
     fi
 
@@ -87,9 +86,7 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
     if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
         touch "$INSTALL_FLAG"
         echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] Homebrew 所有依赖安装成功！"
-        which notify-send >/dev/null 2>&1 && notify-send -i utilities-terminal -a "系统初始化" "终端开发环境就绪" "Homebrew 核心工具链已全自动安装完成！" 2>/dev/null || true
     else
-        echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 警告: brew bundle 未全部成功"
-        which notify-send >/dev/null 2>&1 && notify-send -u critical -i dialog-warning -a "系统初始化" "Homebrew 依赖未全部完成" "部分工具安装异常，详情查看 ~/.local/state/brew-setup.log" 2>/dev/null || true
+        echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 警告: brew bundle 未全部成功，详情见上方日志"
     fi
 ) &
