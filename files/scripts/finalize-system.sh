@@ -31,6 +31,8 @@ ln -sf /dev/null /usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.servic
 rm -f /etc/xdg/Xwayland-session.d/10-ibus-x11 /usr/etc/xdg/Xwayland-session.d/10-ibus-x11
 ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
 ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.service /usr/lib/systemd/system/multi-user.target.wants/flatpak-ustc-mirror.service
+mkdir -p /usr/lib/systemd/system/timers.target.wants
+ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.timer /usr/lib/systemd/system/timers.target.wants/flatpak-ustc-mirror.timer
 systemctl enable libvirtd.service virtqemud.socket virtnetworkd.socket virtstoraged.socket 2>/dev/null || true
 
 glib-compile-schemas /usr/share/glib-2.0/schemas/

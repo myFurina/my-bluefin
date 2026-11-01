@@ -27,16 +27,18 @@ elif [ -f "$HOME/.local/bin/opencode" ] && [ -f /usr/share/ublue-os/my-brew/open
     chmod 755 "$HOME/.local/bin/opencode"
 fi
 
-# 3. 直接激活系统级预置的 Kimpanel 扩展（无需向用户目录重复拷贝副本）
-which gnome-extensions >/dev/null 2>&1 && gnome-extensions enable kimpanel@kde.org 2>/dev/null || true
-
-# 4. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量
+# 3. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量及首次就绪检测
 if ! grep -q "linuxbrew" "$HOME/.bashrc" 2>/dev/null; then
     cat << 'BREWENV' >> "$HOME/.bashrc"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null)"
 export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
 export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
 export HOMEBREW_NO_AUTO_UPDATE=1
+
+# 首次登录未安装完成时的轻量终端进度指引（仅在就绪前提示一次）
+if [ ! -f "$HOME/.config/user-brew-installed" ]; then
+    echo "💡 提示: 后台正在自动安装 Homebrew 开发工具链 (可查看日志: tail -f ~/.local/state/brew-setup.log)"
+fi
 BREWENV
 fi
 
@@ -65,6 +67,7 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
 
     if [ ! -x "${BREW_BIN}" ]; then
         echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 错误: 超时未能检测到可执行的 Homebrew: ${BREW_BIN}"
+        which notify-send >/dev/null 2>&1 && notify-send -u critical -i dialog-error -a "系统初始化" "Homebrew 初始化失败" "未找到 Homebrew 核心程序，详情见 ~/.local/state/brew-setup.log" 2>/dev/null || true
         exit 0
     fi
 
@@ -84,6 +87,9 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
     if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
         touch "$INSTALL_FLAG"
         echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] Homebrew 所有依赖安装成功！"
-        which notify-send >/dev/null 2>&1 && notify-send "系统初始化通知" "个人 Homebrew 开发工具已全自动安装完成！" -i package-x-generic
+        which notify-send >/dev/null 2>&1 && notify-send -i utilities-terminal -a "系统初始化" "终端开发环境就绪" "Homebrew 核心工具链已全自动安装完成！" 2>/dev/null || true
+    else
+        echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 警告: brew bundle 未全部成功"
+        which notify-send >/dev/null 2>&1 && notify-send -u critical -i dialog-warning -a "系统初始化" "Homebrew 依赖未全部完成" "部分工具安装异常，详情查看 ~/.local/state/brew-setup.log" 2>/dev/null || true
     fi
 ) &

@@ -1,0 +1,2 @@
+[org.gnome.shell]
+enabled-extensions=['appindicatorsupport@rgcjonas.gmail.com', 'bazaar-integration@kolunmi.github.io', 'caffeine@patapon.info', 'blur-my-shell@aunetx', 'custom-command-list@storageb.github.com', 'dash-to-dock@micxgx.gmail.com', 'gradia-integration@alexandervanhee.github.io', 'gsconnect@andyholmes.github.io', 'search-light@icedman.github.com', 'kimpanel@kde.org']

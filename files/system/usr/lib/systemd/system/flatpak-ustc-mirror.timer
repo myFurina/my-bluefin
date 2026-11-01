@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly Flathub CDN IP optimization timer
+After=network-online.target
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

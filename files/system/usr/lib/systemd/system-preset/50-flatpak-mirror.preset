@@ -1,1 +1,2 @@
 enable flatpak-ustc-mirror.service
+enable flatpak-ustc-mirror.timer
