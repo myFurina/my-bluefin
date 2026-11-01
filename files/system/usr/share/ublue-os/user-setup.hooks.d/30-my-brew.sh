@@ -39,15 +39,41 @@ export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bot
 export HOMEBREW_NO_AUTO_UPDATE=1
 
 # 首次登录未安装完成时的轻量终端进度指引（仅在就绪前提示一次）
-if [ ! -f "$HOME/.config/user-brew-installed" ]; then
+if [ ! -f "$HOME/.local/state/brew-provisioned.list" ] && [ ! -f "$HOME/.config/user-brew-installed" ]; then
     echo "💡 提示: 后台正在自动安装 Homebrew 开发工具链 (可查看日志: tail -f ~/.local/state/brew-setup.log)"
 fi
 BREWENV
 fi
 
-# 5. 幂等性检测：Homebrew 依赖已安装完成则直接退出
-INSTALL_FLAG="$HOME/.config/user-brew-installed"
-[ -f "$INSTALL_FLAG" ] && exit 0
+# 5. 增量差分检测：仅对未推介过的新配方执行安装，用户主动卸载的工具绝不重新下载
+BREWFILE="/usr/share/ublue-os/my-brew/Brewfile"
+PROVISIONED_FILE="$HOME/.local/state/brew-provisioned.list"
+LEGACY_FLAG="$HOME/.config/user-brew-installed"
+
+# 兼容存量系统平滑迁移：若已有旧版完成标记且无历史清单，将当前已装的 formula 记录为历史已推介
+if [ ! -f "$PROVISIONED_FILE" ] && [ -f "$LEGACY_FLAG" ]; then
+    mkdir -p "$HOME/.local/state"
+    /home/linuxbrew/.linuxbrew/bin/brew list --formula 2>/dev/null > "$PROVISIONED_FILE" || true
+fi
+
+# 从系统 Brewfile 解析所有声明的目标 formula
+target_formulas=()
+if [ -f "$BREWFILE" ]; then
+    while IFS= read -r f; do
+        [ -n "$f" ] && target_formulas+=("$f")
+    done < <(awk -F '["'"'"']' '/^[[:space:]]*brew[[:space:]]+/ {print $2}' "$BREWFILE")
+fi
+
+# 筛选出真正属于新加入的 formula（在历史推介清单中从未出现过的）
+pending_formulas=()
+for formula in "${target_formulas[@]}"; do
+    if ! grep -Fxq "$formula" "$PROVISIONED_FILE" 2>/dev/null; then
+        pending_formulas+=("$formula")
+    fi
+done
+
+# 若没有新配方需要安装，直接毫秒级静默退出（不占进程、不刷日志）
+[ ${#pending_formulas[@]} -eq 0 ] && exit 0
 
 BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
 
@@ -85,11 +111,29 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
     export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
     export HOMEBREW_NO_AUTO_UPDATE=1
 
-    echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 开始执行 brew bundle 批量安装..."
-    if "${BREW_BIN}" bundle --file="/usr/share/ublue-os/my-brew/Brewfile"; then
-        touch "$INSTALL_FLAG"
-        echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] Homebrew 所有依赖安装成功！"
+    echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 发现 ${#pending_formulas[@]} 个待推介工具: ${pending_formulas[*]}"
+
+    # 若为初次全新环境（历史清单尚不存在），直接执行整套 bundle 批量部署
+    if [ ! -s "$PROVISIONED_FILE" ] && [ -f "$BREWFILE" ]; then
+        echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 首次初始化，执行 brew bundle 批量安装..."
+        if "${BREW_BIN}" bundle --file="$BREWFILE"; then
+            printf "%s\n" "${target_formulas[@]}" >> "$PROVISIONED_FILE"
+            touch "$LEGACY_FLAG"
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] Homebrew 所有初始依赖安装成功并写入历史清单！"
+        else
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 警告: brew bundle 未全部成功，详情见上方日志"
+        fi
     else
-        echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 警告: brew bundle 未全部成功，详情见上方日志"
+        # 增量单项/批量安装新加入的工具（用户已删软件绝对不会被重新安装）
+        for pkg in "${pending_formulas[@]}"; do
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 正在增量安装新工具: ${pkg}..."
+            if "${BREW_BIN}" install "$pkg"; then
+                echo "$pkg" >> "$PROVISIONED_FILE"
+                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 工具 ${pkg} 安装成功并写入历史清单！"
+            else
+                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 警告: 工具 ${pkg} 安装失败，将在下次开机重试"
+            fi
+        done
+        touch "$LEGACY_FLAG"
     fi
 ) &

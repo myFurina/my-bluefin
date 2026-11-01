@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""
+My-Bluefin System Flatpak Incremental Provisioner
+- Differential sync: Only installs packages newly added to configuration.yaml.
+- Anti-resurrection: Respects user uninstalls; packages once provisioned are never reinstalled.
+- Zero-cost idle: If no new packages are pending, exits cleanly in milliseconds.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import yaml
+
+CONFIG_PATH = "/usr/share/bluebuild/default-flatpaks/configuration.yaml"
+PROVISIONED_PATH = "/var/lib/flatpak/.default-flatpaks-provisioned.list"
+LEGACY_FLAG_PATH = "/var/lib/flatpak/.default-flatpaks-installed"
+
+def notify_user(title, body):
+    try:
+        sessions = subprocess.check_output(
+            ["loginctl", "list-sessions", "--json=short"], text=True
+        )
+        data = json.loads(sessions)
+        for s in data:
+            uid = s.get("uid")
+            user = s.get("user")
+            if uid is not None and uid >= 1000:
+                runtime_dir = f"/run/user/{uid}"
+                bus_addr = f"unix:path={runtime_dir}/bus"
+                env = os.environ.copy()
+                env["DBUS_SESSION_BUS_ADDRESS"] = bus_addr
+                subprocess.run(
+                    ["sudo", "-u", user, "notify-send", "--app-name=系统应用更新", title, body],
+                    env=env,
+                    timeout=5,
+                    check=False
+                )
+                break
+    except Exception:
+        pass
+
+def get_installed_flatpaks():
+    try:
+        out = subprocess.check_output(
+            ["flatpak", "list", "--system", "--app", "--columns=application"],
+            text=True
+        )
+        return set(line.strip() for line in out.splitlines() if line.strip())
+    except Exception:
+        return set()
+
+def load_provisioned():
+    # 兼容存量系统平滑迁移：若存在旧版单次标记且无历史清单，将当前已装系统应用记录为历史已推介
+    if not os.path.exists(PROVISIONED_PATH) and os.path.exists(LEGACY_FLAG_PATH):
+        installed = get_installed_flatpaks()
+        try:
+            os.makedirs(os.path.dirname(PROVISIONED_PATH), exist_ok=True)
+            with open(PROVISIONED_PATH, "w", encoding="utf-8") as f:
+                for app in sorted(installed):
+                    f.write(f"{app}\n")
+        except Exception as e:
+            print(f"[warn] Failed to migrate legacy provisioned list: {e}", file=sys.stderr)
+        return installed
+
+    if not os.path.exists(PROVISIONED_PATH):
+        return set()
+
+    try:
+        with open(PROVISIONED_PATH, "r", encoding="utf-8") as f:
+            return set(line.strip() for line in f if line.strip())
+    except Exception as e:
+        print(f"[warn] Failed to read {PROVISIONED_PATH}: {e}", file=sys.stderr)
+        return set()
+
+def record_provisioned(apps):
+    try:
+        os.makedirs(os.path.dirname(PROVISIONED_PATH), exist_ok=True)
+        with open(PROVISIONED_PATH, "a", encoding="utf-8") as f:
+            for app in apps:
+                f.write(f"{app}\n")
+    except Exception as e:
+        print(f"[error] Failed to append to {PROVISIONED_PATH}: {e}", file=sys.stderr)
+
+def main():
+    if not os.path.exists(CONFIG_PATH):
+        print(f"[info] Config {CONFIG_PATH} not found, exiting.", file=sys.stderr)
+        sys.exit(0)
+
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            configs = yaml.safe_load(f) or []
+    except Exception as e:
+        print(f"[error] Failed to load {CONFIG_PATH}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    provisioned = load_provisioned()
+
+    for config in configs:
+        if config.get("scope") != "system":
+            continue
+
+        repo = config.get("repo", {})
+        repo_name = repo.get("name", "flathub")
+        repo_url = repo.get("url") or config.get("repo-url") or "https://mirrors.ustc.edu.cn/flathub"
+        repo_title = repo.get("title") or "Flathub"
+
+        # 确保系统级远程仓库已存在且启用
+        if repo_name and repo_url:
+            subprocess.run(
+                ["flatpak", "remote-add", "--system", "--if-not-exists", repo_name, repo_url, f"--title={repo_title}"],
+                check=False
+            )
+            subprocess.run(
+                ["flatpak", "remote-modify", "--system", "--enable", repo_name],
+                check=False
+            )
+
+        target_apps = config.get("install") or []
+        pending = [app for app in target_apps if app not in provisioned]
+
+        # 核心防复活保障：所有在清单里的应用只要曾经推介过，即便用户已卸载，也坚决不再重新安装
+        if not pending:
+            print(f"[info] 全部 {len(target_apps)} 个目标应用均已在历史推介清单中，无需重复安装。")
+            continue
+
+        print(f"[info] 发现 {len(pending)} 个全新加入的应用需要安装: {pending}")
+
+        if config.get("notify", True):
+            notify_user("系统应用更新", f"正在为您自动安装新系统新增的 {len(pending)} 个应用...")
+
+        cmd = ["flatpak", "install", "--system", "--noninteractive", repo_name] + pending
+        res = subprocess.run(cmd)
+
+        # 仅将确实成功部署的应用记录进历史清单
+        currently_installed = get_installed_flatpaks()
+        succeeded = [app for app in pending if app in currently_installed]
+
+        if succeeded:
+            record_provisioned(succeeded)
+            print(f"[info] 成功写入历史清单: {succeeded}")
+
+        if config.get("notify", True) and succeeded:
+            notify_user("系统应用更新完成", f"已成功安装 {len(succeeded)} 个新应用！")
+
+        if res.returncode != 0 and len(succeeded) < len(pending):
+            print(f"[warn] 部分应用未能成功安装 (退出码: {res.returncode})", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()
