@@ -4,6 +4,9 @@ PartOf=graphical-session.target
 After=graphical-session.target gnome-session-initialized.target
 ConditionEnvironment=WAYLAND_DISPLAY
 ConditionUser=!@system
+ConditionUser=!gdm-greeter
+ConditionUser=!gdm
+ConditionGroup=!gdm
 
 [Service]
 Type=simple

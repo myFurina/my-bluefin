@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# 仅对普通真实用户 (UID >= 1000) 执行，跳过 gdm 登录界面等系统虚拟用户
+# 仅对普通真实用户执行，跳过 gdm、gdm-greeter 等系统虚拟用户与锁屏会话
 [ "$(id -u)" -lt 1000 ] && exit 0
+case "$(id -u -n 2>/dev/null)" in
+    gdm|gdm-greeter|gnome-initial-setup) exit 0 ;;
+esac
 
 mkdir -p "$HOME/.local/share/fcitx5/rime" "$HOME/.config/fcitx5/conf"
 if [ ! -f "$HOME/.local/share/fcitx5/rime/default.yaml" ] && [ -d /usr/share/ublue-os/rime-ice ]; then
