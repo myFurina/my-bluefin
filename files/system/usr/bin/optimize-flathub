@@ -1,267 +1,471 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-网络智能动态优选与自适应镜像加速工具 (Flathub + GitHub 全套加速)
-1. 通过国内权威 DoH 动态获取最新官方 A 记录，并融合亚太高带宽 Anycast 优质节点池。
-2. 使用并发线程池对每个域名和 IP 进行严格的真实 TLS 证书验真（SAN 匹配）与延迟测量，杜绝证书报错。
-3. 优选最优 IP 安全写入 /etc/hosts；若某域名无可用节点则自动清理残留（宁缺毋滥）。
-4. Flatpak 智能自适应更新：
-   - 优先尝试官方增量省流量模式 (--use-deltas)；
-   - 启动 15 秒看门狗计时器：15 秒内顺利完成则继续保持省流量；
-   - 若超过 15 秒卡死，自动触发熔断降级为 --no-use-deltas，切换为单包高速完成。
+optimize-flathub / optimize-network
+===================================
+
+做三件事：
+  1. 用国内 DoH 取官方 A 记录，与内置候选池合并，对每个 (域名, IP) 做
+     TCP + TLS 握手 + SAN 校验 + 真实 GET 吞吐测速；
+     只有真正跑得出吞吐的节点才会采用（只测握手延迟会选中
+     "握手通、传数据卡死"的节点）。
+  2. 把最优节点原子写入 /etc/hosts：flock + 临时文件 + fsync + os.replace，
+     保留原文件的权限/属主/SELinux 标签，并留一份备份。
+  3. 可选地把 flathub 远程仓库指向国内镜像（幂等），然后刷新 AppStream 元数据。
+
+关于静态增量（重要）：
+  * static delta 是 `flatpak install/update` 的命令行参数（--no-static-deltas），
+    `flatpak remote-modify` 没有这个选项，无法持久化到仓库配置里；
+  * `flatpak update --appstream` 拉的是元数据索引（appstream2/x86_64），
+    永远是 non-delta，不能用它判断"增量下载是否卡顿"。
+  所以本脚本不再假装"智能增量熔断"。
+
+用法：
+  sudo optimize-flathub              正常执行
+  sudo optimize-flathub --dry-run    只探测并打印，不写任何文件
+  sudo optimize-network              与 optimize-flathub 完全等价（软链接）
+
+配置：/etc/optimize-network.conf（KEY=VALUE，缺省即用内置默认值）
 """
 
+from __future__ import annotations
+
 import concurrent.futures
+import fcntl
 import json
 import os
 import re
+import shutil
 import socket
 import ssl
 import subprocess
+import sys
+import tempfile
 import time
 import urllib.request
 
 HOSTS_FILE = "/etc/hosts"
-APPSTREAM_TIMEOUT_SEC = 15
+HOSTS_BACKUP = "/etc/hosts.optimize-network.bak"
+LOCK_FILE = "/etc/.optimize-network.lock"
+CONFIG_FILE = "/etc/optimize-network.conf"
+FLATPAK = "/usr/bin/flatpak"
+RESTORECON = "/usr/sbin/restorecon"
 
-# 优化加速的核心域名及其专属 Anycast 候选节点池
+DEFAULT_CONFIG = {
+    "MIRROR_URL": "https://mirrors.ustc.edu.cn/flathub",
+    "USE_MIRROR": "1",
+    "DOH_TIMEOUT_SEC": "2.0",
+    "CONNECT_TIMEOUT_SEC": "3.0",
+    "PROBE_DEADLINE_SEC": "8.0",
+    "PROBE_CAP_BYTES": "262144",
+    "MIN_THROUGHPUT_KBPS": "30",
+    "APPSTREAM_TIMEOUT_SEC": "60",
+}
+
+# 需要优化的域名及候选 Anycast / 直连节点池
 DOMAINS = {
     "dl.flathub.org": [
-        "151.101.129.91",
-        "151.101.65.91",
-        "151.101.1.91",
-        "151.101.193.91",
-        "199.232.161.91",
-        "146.75.113.91",
+        "151.101.129.91", "151.101.65.91", "151.101.1.91",
+        "151.101.193.91", "199.232.161.91", "146.75.113.91",
     ],
     "raw.githubusercontent.com": [
-        "151.101.128.133",
-        "151.101.64.133",
-        "151.101.0.133",
-        "151.101.192.133",
-        "185.199.108.133",
-        "185.199.109.133",
-        "185.199.110.133",
-        "185.199.111.133",
+        "185.199.108.133", "185.199.109.133", "185.199.110.133", "185.199.111.133",
+        "151.101.128.133", "151.101.64.133", "151.101.0.133", "151.101.192.133",
     ],
     "github.githubassets.com": [
-        "185.199.108.154",
-        "185.199.109.154",
-        "185.199.110.154",
-        "185.199.111.154",
+        "185.199.108.154", "185.199.109.154", "185.199.110.154", "185.199.111.154",
         "151.101.128.133",
     ],
     "objects.githubusercontent.com": [
-        "185.199.108.133",
-        "185.199.109.133",
-        "185.199.110.133",
-        "185.199.111.133",
+        "185.199.108.133", "185.199.109.133", "185.199.110.133", "185.199.111.133",
     ],
     "github.com": [
-        "20.27.177.113",
-        "20.205.243.166",
-        "140.82.112.4",
-        "140.82.114.4",
-        "140.82.121.4",
+        "140.82.112.3", "140.82.114.3", "140.82.121.3",
+        "140.82.112.4", "140.82.114.4", "140.82.121.4",
+        "20.27.177.113", "20.205.243.166",
     ],
     "codeload.github.com": [
-        "20.205.243.165",
-        "140.82.112.10",
-        "140.82.114.10",
-        "140.82.121.10",
+        "20.205.243.165", "140.82.112.10", "140.82.114.10", "140.82.121.10",
     ],
 }
 
 
-def fetch_doh_ips(domain):
-    """通过国内高可用 DoH 实时解析官方最新 A 记录"""
-    doh_urls = [
+def log(msg):
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def load_config():
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                cfg[key.strip()] = value.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log(f"读取 {CONFIG_FILE} 失败，使用默认值: {exc}")
+    return cfg
+
+
+def fetch_doh_ips(domain, timeout):
+    """通过国内 DoH 取官方 A 记录"""
+    urls = (
         f"https://dns.alidns.com/resolve?name={domain}&type=A",
         f"https://doh.pub/dns-query?name={domain}&type=A",
-    ]
+    )
     ips = []
-    for url in doh_urls:
+    for url in urls:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
-            with urllib.request.urlopen(req, timeout=1.8) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                for ans in data.get("Answer", []):
-                    if ans.get("type") == 1 and ans.get("data"):
-                        ip = ans["data"].strip()
-                        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", ip):
-                            ips.append(ip)
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "curl/8.0", "Accept": "application/dns-json"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace"))
+            for ans in data.get("Answer", ()):
+                ip = str(ans.get("data", "")).strip()
+                if ans.get("type") == 1 and re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", ip):
+                    ips.append(ip)
         except Exception:
             continue
     return ips
 
 
-def verify_ip(domain, ip, timeout=1.8):
-    """验证 IP 的真实 TLS 证书有效性并测量延迟"""
+def san_matches(domain, sans):
+    for name in sans:
+        if name == domain:
+            return True
+        if name.startswith("*.") and domain.endswith(name[1:]) and domain.count(".") == name.count("."):
+            return True
+    return False
+
+
+def probe(domain, ip, cfg):
+    """TCP + TLS 握手 + SAN 校验 + 真实 GET 测速。
+
+    返回 (domain, ip, kbps 或 None, 握手毫秒, 失败原因)
+    """
+    deadline = float(cfg["PROBE_DEADLINE_SEC"])
+    cap = int(cfg["PROBE_CAP_BYTES"])
+    connect_timeout = float(cfg["CONNECT_TIMEOUT_SEC"])
+    min_kbps = float(cfg["MIN_THROUGHPUT_KBPS"])
+
     start = time.time()
+    ctx = ssl.create_default_context()
+    sock = None
     try:
-        ctx = ssl.create_default_context()
-        with socket.create_connection((ip, 443), timeout=timeout) as sock:
-            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
-                cert = ssock.getpeercert()
-                latency = int((time.time() - start) * 1000)
-                sans = [v for k, v in cert.get("subjectAltName", []) if k == "DNS"]
-                matched = any(
-                    s == domain or (s.startswith("*.") and domain.endswith(s[1:]))
-                    for s in sans
-                )
-                if matched:
-                    return (domain, ip, latency)
-    except Exception:
-        pass
-    return (domain, ip, None)
-
-
-def update_hosts(results):
-    """安全原子更新 /etc/hosts"""
-    target_domains = set(DOMAINS.keys())
-    for domain in sorted(target_domains):
-        if domain in results:
-            ip, lat = results[domain]
-            print(f"  [优选成功] {domain:<30} -> {ip:<16} ({lat}ms)")
-        else:
-            print(f"  [原生回退] {domain:<30} (无有效直连节点，保持原生解析)")
-
-    if os.geteuid() != 0:
-        print("==> [提示] 当前以普通用户运行，跳过写入 /etc/hosts（开机服务或使用 sudo 时将自动生效）")
-        return
+        sock = socket.create_connection((ip, 443), timeout=connect_timeout)
+        ssock = ctx.wrap_socket(sock, server_hostname=domain)
+    except Exception as exc:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        return domain, ip, None, None, exc.__class__.__name__
 
     try:
-        with open(HOSTS_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-    except Exception:
-        lines = []
+        cert = ssock.getpeercert() or {}
+        sans = [v for k, v in cert.get("subjectAltName", ()) if k == "DNS"]
+        if not san_matches(domain, sans):
+            return domain, ip, None, None, "证书 SAN 不匹配"
+        handshake_ms = int((time.time() - start) * 1000)
 
-    new_lines = [
-        line
-        for line in lines
-        if not any(d in line for d in target_domains)
-        and "Dynamic Optimized IP" not in line
-        and "Flathub Dynamic IP" not in line
-    ]
-
-    for domain in sorted(target_domains):
-        if domain in results:
-            ip, lat = results[domain]
-            new_lines.append(f"{ip:<16} {domain} # Dynamic Optimized IP ({lat}ms)\n")
-
-    try:
-        with open(HOSTS_FILE, "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
-        print(f"==> 成功将最优网络节点写入 {HOSTS_FILE}")
-    except Exception as e:
-        print(f"警告: 无法写入 {HOSTS_FILE}: {e}")
-
-
-def configure_flatpak_adaptive():
-    """智能自适应更新 Flatpak 软件源配置"""
-    if os.geteuid() != 0:
-        print("==> [提示] 当前以普通用户运行，跳过系统级 Flatpak 源配置（开机服务或使用 sudo 时将自动生效）")
-        return
-
-    if not os.path.exists("/usr/bin/flatpak"):
-        return
-
-    res = subprocess.run(
-        ["/usr/bin/flatpak", "remotes", "--system"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    if "flathub" not in res.stdout:
-        return
-
-    # 1. 确保软件源地址指向中科大镜像
-    subprocess.run(
-        [
-            "/usr/bin/flatpak",
-            "remote-modify",
-            "--system",
-            "flathub",
-            "--url=https://mirrors.ustc.edu.cn/flathub",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    # 2. 默认优先尝试官方增量省流量模式 (--use-deltas)
-    subprocess.run(
-        [
-            "/usr/bin/flatpak",
-            "remote-modify",
-            "--system",
-            "flathub",
-            "--use-deltas",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    print("==> 优先尝试省流量增量模式 (--use-deltas) 刷新 AppStream 元数据...")
-
-    try:
-        refresh_res = subprocess.run(
-            ["/usr/bin/flatpak", "update", "--appstream", "--system", "--noninteractive"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=APPSTREAM_TIMEOUT_SEC,
-            text=True,
+        request = (
+            f"GET / HTTP/1.1\r\n"
+            f"Host: {domain}\r\n"
+            f"User-Agent: optimize-network/2.0\r\n"
+            f"Accept: */*\r\n"
+            f"Range: bytes=0-{cap - 1}\r\n"
+            f"Connection: close\r\n\r\n"
         )
-        if refresh_res.returncode == 0:
-            print(f"🎉 [顺利完成] AppStream 在 {APPSTREAM_TIMEOUT_SEC} 秒内刷新成功，保持省流量模式 (--use-deltas)！")
-            return
-    except subprocess.TimeoutExpired:
-        print(f"⏱️ [触发熔断] AppStream 增量刷新超过 {APPSTREAM_TIMEOUT_SEC} 秒未完成，判定网络卡顿！")
+        ssock.settimeout(2.5)
+        data_start = time.time()
+        ssock.sendall(request.encode("ascii"))
 
-    # 3. 熔断降级分支：切换为 --no-use-deltas 单包极速下载
-    print("==> 正在自适应降级：切换为快速模式 (--no-use-deltas)...")
-    subprocess.run(
-        [
-            "/usr/bin/flatpak",
-            "remote-modify",
-            "--system",
-            "flathub",
-            "--no-use-deltas",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+        buf = bytearray()
+        content_length = None
+        header_end = -1
+        complete = False
+        while len(buf) < cap:
+            if time.time() - data_start > deadline:
+                break
+            try:
+                chunk = ssock.recv(16384)
+            except (socket.timeout, ssl.SSLError):
+                break
+            if not chunk:
+                complete = True
+                break
+            buf.extend(chunk)
+            if header_end < 0:
+                header_end = buf.find(b"\r\n\r\n")
+                if header_end >= 0:
+                    for h in buf[:header_end].decode("latin-1", "replace").lower().splitlines():
+                        if h.startswith("content-length:"):
+                            try:
+                                content_length = int(h.split(":", 1)[1].strip())
+                            except ValueError:
+                                pass
+            if content_length is not None and header_end >= 0:
+                if len(buf) >= header_end + 4 + content_length:
+                    complete = True
+                    break
 
-    try:
-        subprocess.run(
-            ["/usr/bin/flatpak", "update", "--appstream", "--system", "--noninteractive"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=20,
-        )
-        print("==> 已通过快速模式 (--no-use-deltas) 成功更新元数据！")
-    except Exception:
-        pass
+        received = len(buf)
+        data_elapsed = max(time.time() - data_start, 0.001)
+        kbps = (received / 1024.0) / data_elapsed
+
+        # 若服务端返回的小文件（如 301/404/主页）在限时内完整交付，说明连接健康可用
+        if complete and received > 200 and data_elapsed < deadline:
+            return domain, ip, max(kbps, min_kbps), handshake_ms, ""
+
+        if received < 4096 and not complete:
+            return domain, ip, None, handshake_ms, f"数据不足({received}B)"
+        return domain, ip, kbps, handshake_ms, ""
+    except Exception as exc:
+        return domain, ip, None, None, exc.__class__.__name__
+    finally:
+        try:
+            ssock.close()
+        except OSError:
+            pass
 
 
-def main():
-    print("==> 正在并发探测 Flathub 与 GitHub 最佳接入节点...")
-    tasks = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-        for domain, default_ips in DOMAINS.items():
-            doh_ips = fetch_doh_ips(domain)
-            candidate_ips = list(dict.fromkeys(doh_ips + default_ips))
-            for ip in candidate_ips:
-                tasks.append(executor.submit(verify_ip, domain, ip))
+def select_nodes(cfg):
+    domains = list(DOMAINS)
+    doh_timeout = float(cfg["DOH_TIMEOUT_SEC"])
+    min_kbps = float(cfg["MIN_THROUGHPUT_KBPS"])
+
+    doh_map = {d: [] for d in domains}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(fetch_doh_ips, d, doh_timeout): d for d in domains}
+        for future in concurrent.futures.as_completed(futures):
+            domain = futures[future]
+            try:
+                doh_map[domain] = future.result()
+            except Exception:
+                doh_map[domain] = []
+
+    candidates = {
+        d: list(dict.fromkeys(list(doh_map[d]) + list(DOMAINS[d]))) for d in domains
+    }
 
     results = {}
-    for future in concurrent.futures.as_completed(tasks):
-        domain, ip, lat = future.result()
-        if lat is not None:
-            if domain not in results or lat < results[domain][1]:
-                results[domain] = (ip, lat)
+    failures = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
+        futures = [
+            pool.submit(probe, d, ip, cfg) for d, ips in candidates.items() for ip in ips
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            domain, ip, kbps, handshake_ms, reason = future.result()
+            if kbps is None or kbps < min_kbps:
+                failures += 1
+                continue
+            current = results.get(domain)
+            if current is None or kbps > current[1]:
+                results[domain] = (ip, kbps, handshake_ms)
 
-    print("==> 探测完成，正在处理系统路由与配置...")
-    update_hosts(results)
-    configure_flatpak_adaptive()
+    log(f"==> 共探测 {sum(len(v) for v in candidates.values())} 个候选，淘汰 {failures} 个")
+    return results
+
+
+def is_managed_line(line, domains):
+    """判断某行是否由本脚本管理（按 hostname 精确匹配，不做子串匹配）"""
+    if "Dynamic Optimized IP" in line:
+        return True
+    body = line.split("#", 1)[0]
+    fields = body.split()
+    if len(fields) < 2:
+        return False
+    return any(host in domains for host in fields[1:])
+
+
+def build_hosts_text(lines, results):
+    domains = set(DOMAINS)
+    kept = [line for line in lines if not is_managed_line(line, domains)]
+    while kept and not kept[-1].strip():
+        kept.pop()
+    if kept and not kept[-1].endswith("\n"):
+        kept[-1] += "\n"
+    if results:
+        kept.append("\n# Dynamic Optimized IP (by optimize-network)\n")
+        for domain in sorted(domains):
+            if domain in results:
+                ip, kbps, handshake_ms = results[domain]
+                kept.append(
+                    f"{ip:<16} {domain} # Dynamic Optimized IP "
+                    f"({kbps:.0f}KB/s, {handshake_ms}ms)\n"
+                )
+    return "".join(kept)
+
+
+def atomic_write(path, text):
+    """原子替换文件，并保留权限/属主/SELinux 标签"""
+    directory = os.path.dirname(path) or "/"
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".hosts-", suffix=".tmp")
+    os.close(fd)
+    try:
+        if os.path.exists(path):
+            shutil.copy2(path, tmp)  # 复制 mode/owner/xattr(含 security.selinux)
+        with open(tmp, "w", encoding="utf-8", errors="surrogateescape") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        dir_fd = os.open(directory, os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+        if os.path.exists(RESTORECON):
+            subprocess.run(
+                [RESTORECON, "-F", path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def update_hosts(results, dry_run):
+    if dry_run:
+        with open(HOSTS_FILE, encoding="utf-8", errors="surrogateescape") as f:
+            lines = f.readlines()
+        new_text = build_hosts_text(lines, results)
+        if new_text == "".join(lines):
+            log("==> /etc/hosts 无需改动")
+            return
+        log("==> [dry-run] 将要写入 /etc/hosts 的内容：")
+        print(new_text)
+        return
+
+    if os.geteuid() != 0:
+        log("==> 非 root，跳过写入 /etc/hosts（用 sudo 运行才生效）")
+        return
+
+    lock = open(LOCK_FILE, "a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        with open(HOSTS_FILE, encoding="utf-8", errors="surrogateescape") as f:
+            lines = f.readlines()
+        new_text = build_hosts_text(lines, results)
+        if new_text == "".join(lines):
+            log("==> /etc/hosts 无需改动")
+            return
+        shutil.copy2(HOSTS_FILE, HOSTS_BACKUP)
+        atomic_write(HOSTS_FILE, new_text)
+        log(f"==> 已原子写入 {HOSTS_FILE}（备份：{HOSTS_BACKUP}）")
+    except OSError as exc:
+        log(f"==> 写入 /etc/hosts 失败: {exc}")
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+
+def configure_flatpak(cfg, dry_run):
+    if not os.path.exists(FLATPAK):
+        return
+
+    mirror = cfg["MIRROR_URL"]
+    use_mirror = cfg["USE_MIRROR"].strip().lower() in ("1", "true", "yes", "on")
+
+    listed = subprocess.run(
+        [FLATPAK, "remotes", "--system", "--columns=name,url"],
+        capture_output=True,
+        text=True,
+    )
+    if listed.returncode != 0:
+        log(f"==> 读取 flatpak 远程仓库失败: {listed.stderr.strip()}")
+        return
+
+    current = None
+    for line in listed.stdout.splitlines():
+        fields = line.split("\t")
+        if fields and fields[0] == "flathub":
+            current = fields[1] if len(fields) > 1 else ""
+            break
+
+    if current is None:
+        log("==> 未找到 flathub 远程仓库，跳过")
+        return
+
+    if not use_mirror:
+        log("==> USE_MIRROR=0，保持当前 flatpak 源不变")
+    elif current == mirror:
+        log(f"==> flathub 源已是 {mirror}，无需修改")
+    elif dry_run or os.geteuid() != 0:
+        log(f"==> [未执行] 将把 flathub 源 {current} 改为 {mirror}")
+    else:
+        modified = subprocess.run(
+            [FLATPAK, "remote-modify", "--system", "flathub", f"--url={mirror}"],
+            capture_output=True,
+            text=True,
+        )
+        if modified.returncode == 0:
+            log(f"==> flathub 源已切换到 {mirror}")
+        else:
+            log(f"==> 切换 flathub 源失败: {modified.stderr.strip()}")
+
+    if dry_run or os.geteuid() != 0:
+        return
+
+    timeout = float(cfg["APPSTREAM_TIMEOUT_SEC"])
+    log(f"==> 刷新 AppStream 元数据（超时 {timeout:.0f}s）...")
+    try:
+        refreshed = subprocess.run(
+            [FLATPAK, "update", "--appstream", "--system", "--noninteractive"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        log(f"==> AppStream 刷新超过 {timeout:.0f}s 未完成，已放弃（不影响已安装应用）")
+        return
+
+    if refreshed.returncode == 0:
+        log("==> AppStream 元数据刷新成功")
+    else:
+        detail = (refreshed.stderr or refreshed.stdout).strip()
+        log(f"==> AppStream 刷新失败（exit {refreshed.returncode}）: {detail[:300]}")
+
+
+def main(argv):
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+
+    dry_run = "--dry-run" in argv or "-n" in argv
+    if os.geteuid() != 0 and not dry_run:
+        log("提示：非 root 运行，自动进入 dry-run（不写任何文件）")
+        dry_run = True
+
+    cfg = load_config()
+
+    log("==> 开始探测候选节点（TLS 校验 + 真实吞吐测速）...")
+    results = select_nodes(cfg)
+
+    log("==> 优选结果：")
+    for domain in sorted(DOMAINS):
+        if domain in results:
+            ip, kbps, handshake_ms = results[domain]
+            log(f"    {domain:<30} -> {ip:<16} {kbps:>7.0f} KB/s  握手 {handshake_ms}ms")
+        else:
+            log(f"    {domain:<30} -> 无可用节点（保持系统原生解析）")
+
+    update_hosts(results, dry_run)
+    configure_flatpak(cfg, dry_run)
+    log("==> 完成")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main(sys.argv[1:]))
