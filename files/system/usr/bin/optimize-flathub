@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""
+Flathub 智能动态优选与镜像配置工具
+1. 通过国内权威 DoH 动态获取 dl.flathub.org 最新的官方解析 IP。
+2. 结合预置的优质亚太/东京 Anycast 节点池进行真实 TLS 握手测试（校验 SAN 包含 dl.flathub.org）。
+3. 选出延迟最低、证书合法的最优 IP 写入 /etc/hosts。
+4. 若全部节点超时或不可达，则自动清除 /etc/hosts 残留记录，确保回退至系统原生 DNS 解析（宁缺毋滥）。
+5. 自动配置 Flatpak 软件源：应用中科大镜像并开启 --no-use-deltas 杜绝 AppStream 卡顿。
+"""
+
+import json
+import os
+import re
+import socket
+import ssl
+import subprocess
+import time
+import urllib.request
+
+HOST_NAME = "dl.flathub.org"
+HOSTS_FILE = "/etc/hosts"
+
+# 预置亚太/东京高带宽 Anycast 节点池 (带 dl.flathub.org 专属证书)
+CANDIDATE_POOL = [
+    "151.101.129.91",
+    "151.101.65.91",
+    "151.101.1.91",
+    "151.101.193.91",
+    "199.232.161.91",
+    "146.75.113.91",
+]
+
+
+def fetch_doh_ips():
+    """通过国内高可用 DoH 实时解析官方最新 A 记录"""
+    doh_urls = [
+        "https://dns.alidns.com/resolve?name=dl.flathub.org&type=A",
+        "https://doh.pub/dns-query?name=dl.flathub.org&type=A",
+    ]
+    ips = []
+    for url in doh_urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "curl/8.0"})
+            with urllib.request.urlopen(req, timeout=2.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for ans in data.get("Answer", []):
+                    if ans.get("type") == 1 and ans.get("data"):
+                        ip = ans["data"].strip()
+                        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", ip):
+                            ips.append(ip)
+        except Exception:
+            continue
+    return ips
+
+
+def verify_ip(ip, timeout=2.0):
+    """验证 IP 的真实 TLS 证书有效性并测量延迟"""
+    start = time.time()
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((ip, 443), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock, server_hostname=HOST_NAME) as ssock:
+                cert = ssock.getpeercert()
+                latency = int((time.time() - start) * 1000)
+                sans = [v for k, v in cert.get("subjectAltName", []) if k == "DNS"]
+                if HOST_NAME in sans or "*.flathub.org" in sans:
+                    return latency
+    except Exception:
+        pass
+    return None
+
+
+def update_hosts(best_ip):
+    """安全更新 /etc/hosts，若无最优 IP 则彻底清理残留"""
+    try:
+        with open(HOSTS_FILE, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception:
+        lines = []
+
+    # 过滤掉所有涉及 dl.flathub.org 的历史条目
+    new_lines = [
+        line
+        for line in lines
+        if HOST_NAME not in line and "Flathub Dynamic IP" not in line
+    ]
+
+    if best_ip:
+        new_lines.append(f"{best_ip} {HOST_NAME} # Flathub Dynamic IP\n")
+        print(f"==> 已将最优 IP ({best_ip}) 写入 {HOSTS_FILE}")
+    else:
+        print(f"==> 无可用优选 IP，已清理 {HOSTS_FILE} 中的劫持记录，回退原生 DNS")
+
+    try:
+        with open(HOSTS_FILE, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+    except Exception as e:
+        print(f"警告: 无法写入 {HOSTS_FILE}: {e}")
+
+
+def configure_flatpak():
+    """配置 Flatpak 软件源以提升稳定性"""
+    if not os.path.exists("/usr/bin/flatpak"):
+        return
+
+    # 若系统级 flathub 源存在，修改其 URL 并关闭 deltas 差异下载
+    res = subprocess.run(
+        ["/usr/bin/flatpak", "remotes", "--system"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    if "flathub" in res.stdout:
+        subprocess.run(
+            [
+                "/usr/bin/flatpak",
+                "remote-modify",
+                "--system",
+                "flathub",
+                "--url=https://mirrors.ustc.edu.cn/flathub",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [
+                "/usr/bin/flatpak",
+                "remote-modify",
+                "--system",
+                "flathub",
+                "--no-use-deltas",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print("==> Flatpak flathub 源已设置为中科大镜像并禁用 deltas")
+
+
+def main():
+    print("==> 正在探测 Flathub CDN 最佳接入节点...")
+    raw_ips = fetch_doh_ips() + CANDIDATE_POOL
+    # 保持顺序去重
+    ips_to_test = list(dict.fromkeys(raw_ips))
+
+    best_ip = None
+    best_latency = 999999
+
+    for ip in ips_to_test:
+        lat = verify_ip(ip)
+        if lat is not None:
+            print(f"  [有效节点] {ip:<16} 延迟: {lat}ms")
+            if lat < best_latency:
+                best_latency = lat
+                best_ip = ip
+
+    if best_ip:
+        print(f"==> 探测完成，选中最佳节点: {best_ip} (延迟: {best_latency}ms)")
+    else:
+        print("==> 警告: 所有候选节点均无法通过 TLS 握手验证")
+
+    update_hosts(best_ip)
+    configure_flatpak()
+
+
+if __name__ == "__main__":
+    main()
