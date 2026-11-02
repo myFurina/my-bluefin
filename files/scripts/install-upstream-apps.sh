@@ -47,6 +47,13 @@ git clone --depth 1 https://github.com/iDvel/rime-ice.git /tmp/rime-ice
 cp -r /tmp/rime-ice/* /usr/share/ublue-os/rime-ice/
 rm -rf /tmp/rime-ice
 
+# 预置 Rime 自定义补丁：设置右 Shift 键为切换中英文并上屏编码 (commit_code)
+cat << 'EOF' > /usr/share/ublue-os/rime-ice/default.custom.yaml
+# Rime 自定义全局配置补丁
+patch:
+  "ascii_composer/switch_key/Shift_R": commit_code
+EOF
+
 # ==============================================================================
 # 4. 预置与当前系统 GNOME 版本精准匹配的官方 Kimpanel 扩展
 # ==============================================================================

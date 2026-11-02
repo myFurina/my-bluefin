@@ -9,6 +9,17 @@ mkdir -p "$HOME/.local/share/fcitx5/rime" "$HOME/.config/fcitx5/conf"
 if [ ! -f "$HOME/.local/share/fcitx5/rime/default.yaml" ] && [ -d /usr/share/ublue-os/rime-ice ]; then
     cp -rn /usr/share/ublue-os/rime-ice/* "$HOME/.local/share/fcitx5/rime/"
 fi
+if [ ! -f "$HOME/.local/share/fcitx5/rime/default.custom.yaml" ]; then
+    if [ -f /usr/share/ublue-os/rime-ice/default.custom.yaml ]; then
+        cp /usr/share/ublue-os/rime-ice/default.custom.yaml "$HOME/.local/share/fcitx5/rime/default.custom.yaml"
+    else
+        cat << 'EOF' > "$HOME/.local/share/fcitx5/rime/default.custom.yaml"
+# Rime 自定义全局配置补丁
+patch:
+  "ascii_composer/switch_key/Shift_R": commit_code
+EOF
+    fi
+fi
 if [ ! -f "$HOME/.config/fcitx5/profile" ] && [ -f /usr/share/ublue-os/fcitx5-profile/profile ]; then
     cp /usr/share/ublue-os/fcitx5-profile/profile "$HOME/.config/fcitx5/profile"
 fi

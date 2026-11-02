@@ -97,6 +97,7 @@ modules:
           - org.gnome.Papers                        # 现代 PDF 文档阅读器 Papers
           - io.github.celluloid_player.Celluloid    # Celluloid (MPV 内核) 全能硬件加速播放器
           - org.gnome.Decibels                      # GNOME 极简音频播放器
+          - cn.xfangfang.wiliwili                   # wiliwili (第三方 Bilibili 桌面/大屏客户端)
 
           # --- Bluefin 社区精选增强工具 ---
           - com.mattjakeman.ExtensionManager        # GNOME 扩展管理器（在线搜索与开关扩展）
