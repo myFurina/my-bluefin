@@ -1,0 +1,5 @@
+name: opencode
+shortdesc: 解析并缓存最新版 OpenCode 二进制至系统模板目录，配合首登钩子实现用户级免 root 更新。
+example: |
+  - type: opencode
+    source: local

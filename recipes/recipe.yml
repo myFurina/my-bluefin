@@ -51,13 +51,31 @@ modules:
       - source: system
         destination: /
 
-  # 3. 执行云端动态拉取（Clash Verge / OpenCode V2 / 雾凇词库 / Kimpanel）与系统规范化收尾脚本
+  # 3. 声明式智能 GNOME 扩展模块（上游精准匹配 + 缺失版本自动兜底与 metadata 兼容性补丁）
+  - type: smart-gnome-extensions
+    source: local
+    install:
+      - kimpanel@kde.org
+
+  # 4. 上游独立应用声明式原子模块
+  - type: clash-verge
+    source: local
+
+  - type: opencode
+    source: local
+
+  - type: rime-ice
+    source: local
+
+  - type: antigravity
+    source: local
+
+  # 5. 系统底层规范化与收尾脚本
   - type: script
     scripts:
-      - install-upstream-apps.sh
       - finalize-system.sh
 
-  # 4. 系统级 Flatpak 软件套件（100% 全部走中科大镜像源极速秒装，零境外请求）
+  # 6. 系统级 Flatpak 软件套件（100% 全部走中科大镜像源极速秒装，零境外请求）
   - type: default-flatpaks
     configurations:
       - scope: system
@@ -115,5 +133,5 @@ modules:
           - org.gtk.Gtk3theme.adw-gtk3              # GTK3 Adwaita 现代主题兼容支持
           - org.gtk.Gtk3theme.adw-gtk3-dark         # GTK3 Adwaita 深色主题兼容支持
 
-  # 5. 容器镜像加密数字签名（必选）
+  # 7. 容器镜像加密数字签名（必选）
   - type: signing

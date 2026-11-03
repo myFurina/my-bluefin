@@ -1,0 +1,5 @@
+name: antigravity
+shortdesc: 动态解析并安装最新版 Google Antigravity IDE (Linux x64) 至系统全局目录。
+example: |
+  - type: antigravity
+    source: local

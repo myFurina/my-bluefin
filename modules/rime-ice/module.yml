@@ -1,0 +1,5 @@
+name: rime-ice
+shortdesc: 拉取最新版官方雾凇拼音 (Rime-ICE) 词库模板，并预置 Shift_R 切换中英文等全局补丁。
+example: |
+  - type: rime-ice
+    source: local

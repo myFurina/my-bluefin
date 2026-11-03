@@ -1,0 +1,5 @@
+name: clash-verge
+shortdesc: 动态解析并安装最新版 GitHub Clash Verge Rev RPM 客户端包。
+example: |
+  - type: clash-verge
+    source: local

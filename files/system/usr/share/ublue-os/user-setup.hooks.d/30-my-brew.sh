@@ -30,6 +30,16 @@ elif [ -f "$HOME/.local/bin/opencode" ] && [ -f /usr/share/ublue-os/my-brew/open
     chmod 755 "$HOME/.local/bin/opencode"
 fi
 
+# 2.8 确保系统级预置扩展在用户会话中就绪激活（避免存量用户的 dconf 缓存阻断系统出厂预设）
+if [ -d "/usr/share/gnome-shell/extensions" ]; then
+    for ext_path in /usr/share/gnome-shell/extensions/*; do
+        if [ -d "${ext_path}" ]; then
+            ext_uuid=$(basename "${ext_path}")
+            gnome-extensions enable "${ext_uuid}" 2>/dev/null || true
+        fi
+    done
+fi
+
 # 3. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量及首次就绪检测
 if ! grep -q "linuxbrew" "$HOME/.bashrc" 2>/dev/null; then
     cat << 'BREWENV' >> "$HOME/.bashrc"

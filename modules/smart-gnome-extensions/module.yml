@@ -1,0 +1,8 @@
+name: smart-gnome-extensions
+shortdesc: 智能声明式安装 GNOME 扩展模块，具备上游精准匹配、自动历史版本兜底与 metadata.json 动态版本放宽补丁能力。
+example: |
+  - type: smart-gnome-extensions
+    source: local
+    install:
+      - kimpanel@kde.org
+      - Vitals
