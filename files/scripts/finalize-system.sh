@@ -20,6 +20,8 @@ rm -f /etc/xdg/autostart/com.cloudflare.WarpTaskbar.desktop /etc/xdg/autostart/w
 echo "==> 正在校准系统脚本权限、建立服务软链接并编译 GSettings Schema..."
 chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules /usr/share/polkit-1/rules.d/50-libvirt-nopasswd.rules
 chmod 755 /usr/bin/fcitx5-prestart-setup /usr/bin/optimize-flathub
+chmod 755 /usr/libexec/my-bluefin/* 2>/dev/null || true
+chmod 644 /usr/share/ublue-os/grub2/user.cfg 2>/dev/null || true
 ln -sf /usr/bin/optimize-flathub /usr/bin/optimize-network
 chmod 755 /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
 
@@ -31,9 +33,10 @@ ln -sf /dev/null /usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.servic
 rm -f /etc/xdg/Xwayland-session.d/10-ibus-x11 /usr/etc/xdg/Xwayland-session.d/10-ibus-x11
 ln -sf /usr/lib/systemd/user/tailscale-systray.service /usr/lib/systemd/user/graphical-session.target.wants/tailscale-systray.service
 ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.service /usr/lib/systemd/system/multi-user.target.wants/flatpak-ustc-mirror.service
+ln -sf /usr/lib/systemd/system/grub-user-cfg.service /usr/lib/systemd/system/multi-user.target.wants/grub-user-cfg.service
 mkdir -p /usr/lib/systemd/system/timers.target.wants
 ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.timer /usr/lib/systemd/system/timers.target.wants/flatpak-ustc-mirror.timer
-systemctl enable libvirtd.service virtqemud.socket virtnetworkd.socket virtstoraged.socket 2>/dev/null || true
+systemctl enable libvirtd.service virtqemud.socket virtnetworkd.socket virtstoraged.socket grub-user-cfg.service 2>/dev/null || true
 
 glib-compile-schemas /usr/share/glib-2.0/schemas/
 

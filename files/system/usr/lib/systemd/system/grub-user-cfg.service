@@ -1,0 +1,13 @@
+[Unit]
+Description=Sync Custom GRUB user.cfg to Host Bootloader
+ConditionPathExists=/usr/share/ublue-os/grub2/user.cfg
+RequiresMountsFor=/boot
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/my-bluefin/sync-grub-user-cfg
+
+[Install]
+WantedBy=multi-user.target

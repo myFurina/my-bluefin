@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SRC="/usr/share/ublue-os/grub2/user.cfg"
+
+if [ ! -f "${SRC}" ]; then
+    exit 0
+fi
+
+# 在宿主机引导分区就绪后，安全同步自定义 user.cfg（包含 Windows 双系统引导项与超时时间）
+for TARGET_DIR in "/boot/grub2" "/boot/efi/EFI/fedora"; do
+    if [ -d "${TARGET_DIR}" ]; then
+        TARGET="${TARGET_DIR}/user.cfg"
+        if [ ! -f "${TARGET}" ] || ! cmp -s "${SRC}" "${TARGET}"; then
+            echo "==> [my-bluefin] 同步自定义 GRUB user.cfg 至 ${TARGET}..."
+            cp -f "${SRC}" "${TARGET}"
+            chmod 600 "${TARGET}"
+        fi
+    fi
+done
