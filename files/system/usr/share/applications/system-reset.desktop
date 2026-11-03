@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=系统出厂自愈与还原
+Name[en_US]=System Reset & Recovery
+Comment=一键重置桌面设置、输入法环境或彻底出厂还原
+Comment[en_US]=Restore desktop, input methods, and extensions to factory defaults
+Exec=wezterm start -- ujust reset-system
+Icon=system-software-update
+Terminal=false
+Type=Application
+Categories=System;Settings;Utility;
+Keywords=reset;factory;restore;recovery;还原;重置;自愈;

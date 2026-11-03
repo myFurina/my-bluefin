@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ==============================================================================
+# My-Bluefin 系统出厂自愈与还原工具
+# ==============================================================================
+
+# 统一判断 gum 是否可用，提供现代化 TUI
+has_gum() {
+    command -v gum >/dev/null 2>&1
+}
+
+# 辅助输出函数
+log_info() {
+    if has_gum; then
+        gum style --foreground 212 "==> $1"
+    else
+        echo "==> $1"
+    fi
+}
+
+log_success() {
+    if has_gum; then
+        gum style --bold --foreground 82 "✔ $1"
+    else
+        echo "✔ $1"
+    fi
+}
+
+log_warn() {
+    if has_gum; then
+        gum style --bold --foreground 214 "⚠ $1"
+    else
+        echo "⚠ $1"
+    fi
+}
+
+log_error() {
+    if has_gum; then
+        gum style --bold --foreground 196 "✖ $1"
+    else
+        echo "✖ $1"
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 动作 1：重置输入法环境 (Fcitx5 / 雾凇拼音)
+# ------------------------------------------------------------------------------
+do_reset_fcitx5() {
+    log_info "正在重置中文输入法与 Rime 雾凇拼音词库..."
+    pkill -9 fcitx5 2>/dev/null || true
+    rm -rf "$HOME/.config/fcitx5" "$HOME/.local/share/fcitx5"
+    if [ -x /usr/bin/fcitx5-prestart-setup ]; then
+        /usr/bin/fcitx5-prestart-setup
+    fi
+    log_success "中文输入法与雾凇拼音已恢复至出厂预设！"
+}
+
+# ------------------------------------------------------------------------------
+# 动作 2：重置 GNOME 桌面设置与系统扩展
+# ------------------------------------------------------------------------------
+do_reset_desktop() {
+    log_info "正在重置 GNOME 桌面配置、窗口快捷键与出厂扩展..."
+    dconf reset -f /org/gnome/ 2>/dev/null || true
+    dconf reset -f /org/freedesktop/ 2>/dev/null || true
+
+    # 重新激活系统级预置扩展
+    if [ -d "/usr/share/gnome-shell/extensions" ]; then
+        for ext_path in /usr/share/gnome-shell/extensions/*; do
+            if [ -d "${ext_path}" ]; then
+                ext_uuid=$(basename "${ext_path}")
+                gnome-extensions enable "${ext_uuid}" 2>/dev/null || true
+            fi
+        done
+    fi
+    log_success "GNOME 桌面环境与系统扩展已恢复出厂配置！"
+}
+
+# ------------------------------------------------------------------------------
+# 动作 3：重置 Flatpak 权限与补全官方预装应用
+# ------------------------------------------------------------------------------
+do_reset_flatpaks() {
+    log_info "正在重置 Flatpak 用户沙盒权限覆盖..."
+    flatpak override --user --reset 2>/dev/null || true
+
+    if [ -x /usr/libexec/my-bluefin/system-flatpak-incremental-setup ]; then
+        log_info "正在核验并补全出厂预设 Flatpak 套件..."
+        /usr/libexec/my-bluefin/system-flatpak-incremental-setup 2>/dev/null || true
+    fi
+    log_success "Flatpak 沙盒权限已重置，官方应用已补全！"
+}
+
+# ------------------------------------------------------------------------------
+# 动作 4：重置终端与用户开发环境 (WezTerm / OpenCode / Brew)
+# ------------------------------------------------------------------------------
+do_reset_terminal_env() {
+    log_info "正在恢复 WezTerm 终端配置、OpenCode 与 Homebrew 环境..."
+    if [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
+        cp -f /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.wezterm.lua"
+        chmod 644 "$HOME/.wezterm.lua"
+    fi
+    rm -f "$HOME/.config/opencode-initialized"
+    if [ -x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh ]; then
+        /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh 2>/dev/null || true
+    fi
+    log_success "终端环境、OpenCode 启动器与 Homebrew 环境已恢复出厂配置！"
+}
+
+# ------------------------------------------------------------------------------
+# 模式 A：轻度出厂修复（保留个人文件，安全推荐）
+# ------------------------------------------------------------------------------
+mode_light_repair() {
+    echo ""
+    log_info "开始执行【轻度出厂自愈修复】（100% 保护您的个人文件与下载）..."
+    
+    do_reset_desktop
+    do_reset_fcitx5
+    do_reset_flatpaks
+    do_reset_terminal_env
+
+    echo ""
+    if has_gum; then
+        gum style --border normal --margin "1" --padding "1 2" --border-foreground 82 \
+            "✔ 轻度出厂修复已完成！" \
+            "• 桌面、输入法、快捷键、扩展与终端环境已全面自愈恢复。" \
+            "• 您的个人文件、工作区代码与数据未受任何修改。" \
+            "" \
+            "建议：注销当前桌面或重启计算机，即可享受焕然一新的出厂体验。"
+        
+        if gum confirm "是否现在注销当前桌面会话以使更改全面生效？"; then
+            gnome-session-quit --logout --no-prompt 2>/dev/null || true
+        fi
+    else
+        echo "=================================================================="
+        echo "✔ 轻度出厂修复已完成！建议注销当前桌面或重启计算机生效。"
+        echo "=================================================================="
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 模式 B：彻底清除数据并出厂重构（危险！全清出厂）
+# ------------------------------------------------------------------------------
+mode_nuclear_reset() {
+    echo ""
+    if has_gum; then
+        gum style --border double --margin "1" --padding "1 2" --border-foreground 196 \
+            "⛔ 极度危险：彻底清除个人数据并出厂重构" \
+            "" \
+            "此操作将永久清空当前主目录 ($HOME) 下的所有内容：" \
+            "• 所有个人文件（下载、文档、桌面、代码、图片、视频等）" \
+            "• 所有浏览器历史、登录凭据与应用存档 (~/.var/app/)" \
+            "• 所有本地应用配置文件与私有密钥 (~/.config, ~/.local, ~/.ssh)" \
+            "" \
+            "系统主目录将被 100% 重建为开箱首次启动时的纯净空状态，此操作不可撤销！"
+        
+        CONFIRM_INPUT=$(gum input --placeholder "如果确认清空，请手动输入大写 YES")
+    else
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "⛔ 危险：此操作将永久删除 $HOME 下的所有个人文件且不可恢复！"
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        read -rp "如果确认清空，请手动输入大写 YES: " CONFIRM_INPUT
+    fi
+
+    if [ "${CONFIRM_INPUT}" != "YES" ]; then
+        log_warn "输入未匹配，已安全取消彻底出厂重构操作。"
+        return
+    fi
+
+    log_info "正在抹除当前用户所有数据与个人文件..."
+    find "$HOME" -mindepth 1 -delete 2>/dev/null || true
+
+    log_info "正在重新拉取系统级出厂骨架 (/etc/skel)..."
+    cp -r /etc/skel/. "$HOME/" 2>/dev/null || true
+
+    log_info "正在重新生成标准 XDG 用户目录..."
+    xdg-user-dirs-update --force 2>/dev/null || true
+
+    log_info "正在重置系统注册表与桌面数据库..."
+    dconf reset -f / 2>/dev/null || true
+
+    log_info "正在重新触发系统级出厂初始化钩子..."
+    if [ -x /usr/bin/fcitx5-prestart-setup ]; then
+        /usr/bin/fcitx5-prestart-setup 2>/dev/null || true
+    fi
+    if [ -x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh ]; then
+        /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh 2>/dev/null || true
+    fi
+
+    log_success "主目录已彻底重构为纯净开箱状态！"
+    log_info "系统正在自动退出当前图形会话以重新加载出厂用户环境..."
+    sleep 2
+    gnome-session-quit --logout --no-prompt 2>/dev/null || true
+}
+
+# ------------------------------------------------------------------------------
+# 模式 C：单项组件急救箱
+# ------------------------------------------------------------------------------
+mode_single_rescue() {
+    echo ""
+    local SUB_CHOICE=""
+    if has_gum; then
+        SUB_CHOICE=$(gum choose \
+            "1. 仅重置中文输入法环境 (Fcitx5 / 雾凇拼音词库)" \
+            "2. 仅重置 GNOME 桌面环境与系统扩展" \
+            "3. 仅重置 Flatpak 沙盒权限与补全官方预装应用" \
+            "4. 仅重置系统底层叠加包 (rpm-ostree reset)" \
+            "5. 返回主菜单")
+    else
+        echo "--- 单项组件急救箱 ---"
+        echo "1) 仅重置中文输入法环境 (Fcitx5 / 雾凇拼音词库)"
+        echo "2) 仅重置 GNOME 桌面环境与系统扩展"
+        echo "3) 仅重置 Flatpak 沙盒权限与补全官方预装应用"
+        echo "4) 仅重置系统底层叠加包 (rpm-ostree reset)"
+        echo "5) 返回主菜单"
+        read -rp "请选择: " SUB_NUM
+        case "$SUB_NUM" in
+            1) SUB_CHOICE="1." ;;
+            2) SUB_CHOICE="2." ;;
+            3) SUB_CHOICE="3." ;;
+            4) SUB_CHOICE="4." ;;
+            *) SUB_CHOICE="5." ;;
+        esac
+    fi
+
+    case "${SUB_CHOICE}" in
+        1*)
+            do_reset_fcitx5
+            ;;
+        2*)
+            do_reset_desktop
+            ;;
+        3*)
+            do_reset_flatpaks
+            ;;
+        4*)
+            log_info "正在清除所有本地手动叠加的原生 RPM 软件包..."
+            rpm-ostree reset
+            log_success "已清除本地所有叠加包！请重启生效。"
+            ;;
+        *)
+            return
+            ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# 主入口
+# ------------------------------------------------------------------------------
+main() {
+    clear
+    if has_gum; then
+        gum style --border normal --margin "1" --padding "1 2" --border-foreground 39 \
+            "🛠  My-Bluefin 系统出厂自愈与还原工具" \
+            "轻松自愈桌面配置冲突，或彻底回到刚刷完镜像的纯净状态"
+    else
+        echo "=================================================================="
+        echo "🛠  My-Bluefin 系统出厂自愈与还原工具"
+        echo "=================================================================="
+    fi
+
+    local MAIN_CHOICE=""
+    if has_gum; then
+        MAIN_CHOICE=$(gum choose \
+            "🟢 1. 轻度出厂自愈（推荐：恢复桌面/输入法/扩展/终端，100% 保留个人文件）" \
+            "🔴 2. 彻底出厂重构（危险：清空个人文件与配置，主目录回到开箱状态）" \
+            "🧩 3. 单项组件急救箱（仅修复输入法、桌面、Flatpak 权限或清除叠加包）" \
+            "🚪 4. 退出")
+    else
+        echo "1) 轻度出厂自愈（推荐：100% 保留个人文件）"
+        echo "2) 彻底出厂重构（危险：清空个人文件与配置）"
+        echo "3) 单项组件急救箱"
+        echo "4) 退出"
+        read -rp "请选择模式 (1-4): " MAIN_NUM
+        case "$MAIN_NUM" in
+            1) MAIN_CHOICE="1." ;;
+            2) MAIN_CHOICE="2." ;;
+            3) MAIN_CHOICE="3." ;;
+            *) MAIN_CHOICE="4." ;;
+        esac
+    fi
+
+    case "${MAIN_CHOICE}" in
+        *1.*)
+            mode_light_repair
+            ;;
+        *2.*)
+            mode_nuclear_reset
+            ;;
+        *3.*)
+            mode_single_rescue
+            ;;
+        *)
+            echo "已取消操作并退出。"
+            exit 0
+            ;;
+    esac
+}
+
+main "$@"
