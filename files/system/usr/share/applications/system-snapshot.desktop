@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=系统快照时光机
+Name[en_US]=System Snapshot & Time Machine
+Comment=类似虚拟机的一键创建快照与时光机倒流还原
+Comment[en_US]=VM-like instant Btrfs snapshots and full system rollback
+Exec=wezterm start -- ujust snapshot
+Icon=system-software-update
+Terminal=false
+Type=Application
+Categories=System;Settings;Utility;
+Keywords=snapshot;backup;restore;rollback;timemachine;快照;还原;时光机;备份;

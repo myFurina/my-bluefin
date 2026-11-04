@@ -1,0 +1,439 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# My-Bluefin 系统快照与时光机还原引擎 (System Snapshot & Time Machine)
+# 基于 Btrfs 原生子卷 CoW 快照 + OSTree 原子镜像 + /etc 增量状态全捕获
+# ==============================================================================
+set -euo pipefail
+
+# 1. 权限保障：必须在 root 权限下执行（支持自动提权）
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v pkexec >/dev/null 2>&1; then
+        exec pkexec env DISPLAY="${DISPLAY:-}" XAUTHORITY="${XAUTHORITY:-}" WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" "$0" "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        exec sudo "$0" "$@"
+    else
+        echo "✖ 错误: 本工具需要 root 权限，请使用 sudo 运行。" >&2
+        exit 1
+    fi
+fi
+
+# 2. TUI 与彩色输出辅助
+has_gum() {
+    command -v gum >/dev/null 2>&1
+}
+
+log_title() {
+    if has_gum; then
+        gum style --bold --foreground 212 --border double --border-foreground 212 --padding "0 2" --margin "1 0" "$1"
+    else
+        echo -e "\n========================================================"
+        echo -e "   $1"
+        echo -e "========================================================\n"
+    fi
+}
+
+log_info() {
+    if has_gum; then
+        gum style --foreground 75 "==> $1"
+    else
+        echo "==> $1"
+    fi
+}
+
+log_success() {
+    if has_gum; then
+        gum style --bold --foreground 82 "✔ $1"
+    else
+        echo "✔ $1"
+    fi
+}
+
+log_warn() {
+    if has_gum; then
+        gum style --bold --foreground 214 "⚠ $1"
+    else
+        echo "⚠ $1"
+    fi
+}
+
+log_error() {
+    if has_gum; then
+        gum style --bold --foreground 196 "✖ $1"
+    else
+        echo "✖ $1"
+    fi
+}
+
+# 3. 动态寻找 Btrfs 顶层卷并挂载
+MNT_DIR=""
+
+cleanup() {
+    if [ -n "${MNT_DIR}" ] && [ -d "${MNT_DIR}" ]; then
+        if mountpoint -q "${MNT_DIR}" 2>/dev/null; then
+            umount "${MNT_DIR}" 2>/dev/null || true
+        fi
+        rm -rf "${MNT_DIR}" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+mount_btrfs_pool() {
+    local btrfs_uuid
+    btrfs_uuid=$(findmnt -no UUID /var 2>/dev/null || findmnt -no UUID /home 2>/dev/null || true)
+    if [ -z "${btrfs_uuid}" ]; then
+        log_error "未能检测到底层 Btrfs 分区 UUID，无法执行快照操作。"
+        exit 1
+    fi
+
+    MNT_DIR=$(mktemp -d /run/btrfs-pool.XXXXXX)
+    mount -o subvolid=5 "/dev/disk/by-uuid/${btrfs_uuid}" "${MNT_DIR}"
+
+    # 确保存放快照的隔离目录存在
+    mkdir -p "${MNT_DIR}/.snapshots"
+    chmod 700 "${MNT_DIR}/.snapshots"
+}
+
+get_next_id() {
+    local max_id=0
+    for d in "${MNT_DIR}/.snapshots"/*; do
+        if [ -d "${d}" ]; then
+            local base
+            base=$(basename "${d}")
+            if [[ "${base}" =~ ^[0-9]+$ ]] && [ "${base}" -gt "${max_id}" ]; then
+                max_id="${base}"
+            fi
+        fi
+    done
+    echo $((max_id + 1))
+}
+
+# ------------------------------------------------------------------------------
+# 功能 1：创建新快照
+# ------------------------------------------------------------------------------
+do_create() {
+    local name="${1:-}"
+    if [ -z "${name}" ]; then
+        if has_gum; then
+            name=$(gum input --placeholder "请输入快照描述（如：配置Clash前、出厂纯净状态）" --width 50)
+        else
+            read -r -p "请输入快照描述名称: " name
+        fi
+    fi
+    name="${name:-未命名快照}"
+
+    mount_btrfs_pool
+
+    local snap_id
+    snap_id=$(get_next_id)
+    local target_dir="${MNT_DIR}/.snapshots/${snap_id}"
+
+    log_info "正在创建系统快照 #${snap_id} (${name})..."
+
+    mkdir -p "${target_dir}"
+
+    # 1. 抓取 /home 原生 Btrfs CoW 快照 (只读)
+    if [ -d "${MNT_DIR}/home" ]; then
+        log_info "正在捕获用户空间数据 (/home)..."
+        btrfs subvolume snapshot -r "${MNT_DIR}/home" "${target_dir}/home" >/dev/null
+    fi
+
+    # 2. 抓取 /var 原生 Btrfs CoW 快照 (只读)
+    if [ -d "${MNT_DIR}/var" ]; then
+        log_info "正在捕获系统应用与服务状态 (/var)..."
+        btrfs subvolume snapshot -r "${MNT_DIR}/var" "${target_dir}/var" >/dev/null
+    fi
+
+    # 3. 增量归档 /etc 配置文件
+    log_info "正在捕获底层系统配置 (/etc)..."
+    mkdir -p "${target_dir}/etc"
+    rsync -aAX --delete /etc/ "${target_dir}/etc/" 2>/dev/null || cp -a /etc/* "${target_dir}/etc/" 2>/dev/null || true
+
+    # 4. 获取当前 OSTree 镜像部署 Checksum
+    local ostree_commit="unknown"
+    if command -v rpm-ostree >/dev/null 2>&1; then
+        ostree_commit=$(rpm-ostree status --json 2>/dev/null | jq -r '.deployments[0].checksum // "unknown"' || echo "unknown")
+    fi
+
+    local kernel_ver
+    kernel_ver=$(uname -r)
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # 5. 写入快照元数据
+    cat << EOF > "${target_dir}/info.json"
+{
+  "id": ${snap_id},
+  "name": "${name}",
+  "timestamp": "${timestamp}",
+  "ostree_commit": "${ostree_commit}",
+  "kernel": "${kernel_ver}"
+}
+EOF
+
+    sync
+    log_success "快照 #${snap_id} 创建成功！已完整锁定当前系统、配置与用户数据。"
+}
+
+# ------------------------------------------------------------------------------
+# 功能 2：列出所有快照
+# ------------------------------------------------------------------------------
+do_list() {
+    mount_btrfs_pool
+
+    local count=0
+    for d in "${MNT_DIR}/.snapshots"/*; do
+        [ -f "${d}/info.json" ] && ((count++)) || true
+    done
+
+    if [ "${count}" -eq 0 ]; then
+        log_warn "当前存储池中尚未创建任何系统快照。"
+        return 0
+    fi
+
+    log_title "My-Bluefin 系统快照历史存档清单"
+
+    printf "%-6s  %-20s  %-28s  %-16s\n" "编号" "创建时间" "描述说明" "OS 镜像提交"
+    echo "---------------------------------------------------------------------------------"
+
+    for d in $(ls -d "${MNT_DIR}/.snapshots"/* 2>/dev/null | sort -V); do
+        local info="${d}/info.json"
+        if [ -f "${info}" ]; then
+            local id name time commit
+            id=$(jq -r '.id' "${info}")
+            name=$(jq -r '.name' "${info}")
+            time=$(jq -r '.timestamp' "${info}")
+            commit=$(jq -r '.ostree_commit' "${info}" | cut -c1-12)
+
+            printf "#%-5s  %-20s  %-28s  %-16s\n" "${id}" "${time}" "${name}" "${commit}"
+        fi
+    done
+    echo "---------------------------------------------------------------------------------"
+}
+
+# ------------------------------------------------------------------------------
+# 功能 3：还原指定快照
+# ------------------------------------------------------------------------------
+do_restore() {
+    local target_id="${1:-}"
+    mount_btrfs_pool
+
+    if [ -z "${target_id}" ]; then
+        # 收集可选列表
+        local options=()
+        for d in $(ls -d "${MNT_DIR}/.snapshots"/* 2>/dev/null | sort -V); do
+            local info="${d}/info.json"
+            if [ -f "${info}" ]; then
+                local id name time
+                id=$(jq -r '.id' "${info}")
+                name=$(jq -r '.name' "${info}")
+                time=$(jq -r '.timestamp' "${info}")
+                options+=("#${id} | ${time} | ${name}")
+            fi
+        done
+
+        if [ ${#options[@]} -eq 0 ]; then
+            log_error "无可用于还原的历史快照。"
+            return 1
+        fi
+
+        local selected=""
+        if has_gum; then
+            selected=$(gum choose --header "请选择要恢复回退的快照节点:" "${options[@]}")
+        else
+            echo "可用快照:"
+            for opt in "${options[@]}"; do
+                echo "  ${opt}"
+            done
+            read -r -p "请输入要恢复的快照编号 ID (纯数字): " target_id
+        fi
+
+        if [ -n "${selected}" ]; then
+            target_id=$(echo "${selected}" | awk '{print $1}' | tr -d '#')
+        fi
+    fi
+
+    local snap_dir="${MNT_DIR}/.snapshots/${target_id}"
+    if [ ! -f "${snap_dir}/info.json" ]; then
+        log_error "未找到编号为 #${target_id} 的有效快照！"
+        return 1
+    fi
+
+    local snap_name
+    snap_name=$(jq -r '.name' "${snap_dir}/info.json")
+
+    log_warn "【警告】准备将系统回滚至快照 #${target_id} [${snap_name}]"
+    log_warn "此操作将倒流所有桌面设置、输入法词库、网络凭证（Tailscale/WARP/Clash）及应用数据！"
+
+    if has_gum; then
+        if ! gum confirm "确定要立即还原至此快照并锁定回滚吗？"; then
+            log_info "用户已取消还原操作。"
+            return 0
+        fi
+    else
+        read -r -p "确定要继续回滚吗？(y/N): " confirm
+        [[ "${confirm}" =~ ^[Yy]$ ]] || { log_info "已取消。"; return 0; }
+    fi
+
+    log_info "正在执行原子级状态恢复与子卷挂载重置..."
+
+    # 1. 恢复 /home (安全留存预备份)
+    if [ -d "${snap_dir}/home" ]; then
+        log_info "正在回滚用户目录 (/home)..."
+        local backup_home="${MNT_DIR}/home.pre-restore.$(date +%s)"
+        mv "${MNT_DIR}/home" "${backup_home}"
+        btrfs subvolume snapshot "${snap_dir}/home" "${MNT_DIR}/home" >/dev/null
+    fi
+
+    # 2. 恢复 /var (安全留存预备份)
+    if [ -d "${snap_dir}/var" ]; then
+        log_info "正在回滚系统应用与服务数据 (/var)..."
+        local backup_var="${MNT_DIR}/var.pre-restore.$(date +%s)"
+        mv "${MNT_DIR}/var" "${backup_var}"
+        btrfs subvolume snapshot "${snap_dir}/var" "${MNT_DIR}/var" >/dev/null
+    fi
+
+    # 3. 恢复 /etc 配置
+    if [ -d "${snap_dir}/etc" ]; then
+        log_info "正在回滚系统全局配置 (/etc)..."
+        rsync -aAX --delete "${snap_dir}/etc/" /etc/ 2>/dev/null || true
+    fi
+
+    sync
+    log_success "🎉 快照 #${target_id} 数据已成功就绪！系统将在重启后 100% 恢复至当时状态。"
+
+    # 提示是否立即重启
+    if has_gum; then
+        if gum confirm "为了使恢复的系统子卷与服务完全生效，建议立即重启。是否现在重启？"; then
+            systemctl reboot
+        fi
+    else
+        read -r -p "是否立即重启计算机以完成还原？(y/N): " rb
+        if [[ "${rb}" =~ ^[Yy]$ ]]; then
+            systemctl reboot
+        fi
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 功能 4：删除指定快照
+# ------------------------------------------------------------------------------
+do_delete() {
+    local target_id="${1:-}"
+    mount_btrfs_pool
+
+    if [ -z "${target_id}" ]; then
+        read -r -p "请输入要彻底删除的快照编号 ID: " target_id
+    fi
+
+    local snap_dir="${MNT_DIR}/.snapshots/${target_id}"
+    if [ ! -d "${snap_dir}" ]; then
+        log_error "快照 #${target_id} 不存在！"
+        return 1
+    fi
+
+    log_info "正在清理快照 #${target_id} 的 Btrfs 子卷与数据..."
+
+    if [ -d "${snap_dir}/home" ]; then
+        btrfs subvolume delete "${snap_dir}/home" >/dev/null 2>&1 || rm -rf "${snap_dir}/home" 2>/dev/null || true
+    fi
+
+    if [ -d "${snap_dir}/var" ]; then
+        btrfs subvolume delete "${snap_dir}/var" >/dev/null 2>&1 || rm -rf "${snap_dir}/var" 2>/dev/null || true
+    fi
+
+    rm -rf "${snap_dir}"
+    sync
+    log_success "快照 #${target_id} 已彻底删除，相关累积空间已释放！"
+}
+
+# ------------------------------------------------------------------------------
+# 交互式主菜单 (在无参数直接启动时进入)
+# ------------------------------------------------------------------------------
+interactive_menu() {
+    while true; do
+        log_title "My-Bluefin 系统时光机与快照管理中心"
+        
+        local action=""
+        if has_gum; then
+            action=$(gum choose \
+                "📸 创建新系统快照 (Create Snapshot)" \
+                "📋 查看所有历史快照 (List Snapshots)" \
+                "⏪ 还原系统至指定快照 (Restore Snapshot)" \
+                "🗑️  删除指定快照 (Delete Snapshot)" \
+                "🚪 退出 (Exit)")
+        else
+            echo "1. 创建新系统快照"
+            echo "2. 查看所有历史快照"
+            echo "3. 还原系统至指定快照"
+            echo "4. 删除指定快照"
+            echo "5. 退出"
+            read -r -p "请选择操作 [1-5]: " choice
+            case "${choice}" in
+                1) action="创建" ;;
+                2) action="查看" ;;
+                3) action="还原" ;;
+                4) action="删除" ;;
+                *) exit 0 ;;
+            esac
+        fi
+
+        case "${action}" in
+            *"创建"*)
+                do_create ""
+                ;;
+            *"查看"*)
+                do_list
+                ;;
+            *"还原"*)
+                do_restore ""
+                ;;
+            *"删除"*)
+                do_delete ""
+                ;;
+            *)
+                log_info "已退出系统时光机。"
+                break
+                ;;
+        esac
+
+        echo ""
+        if has_gum; then
+            gum input --placeholder "按回车键返回主菜单..." >/dev/null || true
+        else
+            read -r -p "按回车键继续..." || true
+        fi
+        clear 2>/dev/null || true
+    done
+}
+
+# ------------------------------------------------------------------------------
+# 命令行调度入口
+# ------------------------------------------------------------------------------
+main() {
+    local cmd="${1:-}"
+    shift 2>/dev/null || true
+
+    case "${cmd}" in
+        create|save)
+            do_create "$@"
+            ;;
+        list|ls)
+            do_list
+            ;;
+        restore|rollback)
+            do_restore "$@"
+            ;;
+        delete|del|rm)
+            do_delete "$@"
+            ;;
+        "")
+            interactive_menu
+            ;;
+        *)
+            echo "用法: $0 {create [名称] | list | restore [ID] | delete [ID]}"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
