@@ -43,8 +43,9 @@ while IFS= read -r ext || [ -n "${ext}" ]; do
     vsix_path="${VSIX_CACHE_DIR}/${ext}.vsix"
 
     echo "--> [预缓存] 正在下载扩展离线包: ${ext}..."
-    # 官方 Marketplace API 与 open-vsx 双源冗余下载
+    # 官方 Marketplace API (优先探测 linux-x64 架构原生包，回退通用包) 与 open-vsx 多源下载
     download_urls=(
+        "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${ext_name}/latest/vspackage?targetPlatform=linux-x64"
         "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/${publisher}/vsextensions/${ext_name}/latest/vspackage"
         "https://${publisher}.gallery.vsassets.io/_apis/public/gallery/publisher/${publisher}/extension/${ext_name}/latest/assetbyname/Microsoft.VisualStudio.Services.VSIXPackage"
         "https://open-vsx.org/api/${publisher}/${ext_name}/latest/file"
