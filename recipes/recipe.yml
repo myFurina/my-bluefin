@@ -95,13 +95,13 @@ modules:
     scripts:
       - finalize-system.sh
 
-  # 6. 系统级 Flatpak 软件套件（100% 全部走中科大镜像源极速秒装，零境外请求）
+  # 6. 系统级 Flatpak 软件套件（Fastly 官方源保证元数据完整 + 中科大 contenturl 镜像加速大包）
   - type: default-flatpaks
     configurations:
       - scope: system
         notify: true
         repo-name: flathub
-        repo-url: https://mirrors.ustc.edu.cn/flathub
+        repo-url: https://dl.flathub.org/repo/
         install:
           # --- 核心网络与办公套件 ---
           - org.mozilla.firefox                     # 火狐浏览器（含全套非自由多媒体解码器）

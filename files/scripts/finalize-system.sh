@@ -40,6 +40,7 @@ ln -sf /usr/lib/systemd/system/flatpak-ustc-mirror.timer /usr/lib/systemd/system
 systemctl enable libvirtd.service virtqemud.socket virtnetworkd.socket virtstoraged.socket grub-user-cfg.service 2>/dev/null || true
 
 glib-compile-schemas /usr/share/glib-2.0/schemas/
+flatpak remote-modify --system --disable fedora 2>/dev/null || true
 
 # ==============================================================================
 # 3. OSTree 规范化兜底：消除 /usr/etc 与 /etc 双目录冲突

@@ -33,7 +33,8 @@ FLATPAK = "/usr/bin/flatpak"
 RESTORECON = "/usr/sbin/restorecon"
 
 DOMAIN = "dl.flathub.org"
-MIRROR = "https://mirrors.ustc.edu.cn/flathub"
+OFFICIAL_REPO_URL = "https://dl.flathub.org/repo/"
+MIRROR_CONTENT_URL = "https://mirrors.ustc.edu.cn/flathub"
 CANDIDATES = [
     "151.101.1.91", "151.101.65.91", "151.101.129.91",
     "151.101.193.91", "146.75.113.91", "199.232.161.91",
@@ -219,35 +220,34 @@ def update_hosts(ip, dry_run):
 
 
 def configure_flatpak(dry_run):
-    listed = subprocess.run([FLATPAK, "remotes", "--system", "--columns=name,url"],
-                            capture_output=True, text=True)
-    if listed.returncode != 0:
-        log(f"读取远程仓库失败: {listed.stderr.strip()}")
-        return
-    current = None
-    for line in listed.stdout.splitlines():
-        f = line.split("\t")
-        if f and f[0] == "flathub":
-            current = f[1] if len(f) > 1 else ""
-            break
-    if current is None:
-        log("未找到 flathub 远程仓库")
-        return
-    if current == MIRROR:
-        log(f"flathub 源已是 {MIRROR}")
-    elif dry_run:
-        log(f"[dry-run] 将把 flathub 源 {current} 改为 {MIRROR}")
-    else:
-        m = subprocess.run([FLATPAK, "remote-modify", "--system", "flathub",
-                            f"--url={MIRROR}"], capture_output=True, text=True)
-        if m.returncode == 0:
-            log(f"flathub 源: {current} -> {MIRROR}")
-        else:
-            log(f"切换镜像失败: {m.stderr.strip()}")
-
     if dry_run:
+        log(f"[dry-run] 将配置 flathub 主地址为官方源 {OFFICIAL_REPO_URL} (AppStream/元数据走已优化的 Fastly 节点)")
+        log(f"[dry-run] 将配置 flathub contenturl 为镜像源 {MIRROR_CONTENT_URL} (大包走中科大高速拉取)")
         return
-    log("flathub 镜像与网络解析已就绪")
+
+    # 1. 确保 flathub 主 URL 始终为官方源 (确保 AppStream 元数据、更新摘要 100% 完整可用)
+    m = subprocess.run([FLATPAK, "remote-modify", "--system", "flathub",
+                        f"--url={OFFICIAL_REPO_URL}"], capture_output=True, text=True)
+    if m.returncode == 0:
+        log(f"flathub 主源已配置: {OFFICIAL_REPO_URL} (AppStream 元数据直连)")
+    else:
+        log(f"配置主源失败: {m.stderr.strip()}")
+
+    # 2. 通过 OSTree 原生 contenturl 配置应用本体大包镜像加速
+    ostree_res = subprocess.run(
+        ["ostree", "config", "--repo=/var/lib/flatpak/repo", "set",
+         'remote "flathub".contenturl', MIRROR_CONTENT_URL],
+        capture_output=True, text=True
+    )
+    if ostree_res.returncode == 0:
+        log(f"flathub 内容加速源已配置: contenturl -> {MIRROR_CONTENT_URL}")
+    else:
+        log(f"配置内容加速源失败: {ostree_res.stderr.strip()}")
+
+    # 3. 自动禁用 fedora 冲突源
+    subprocess.run([FLATPAK, "remote-modify", "--system", "--disable", "fedora"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log("flathub 官方元数据 + 镜像大包分流架构已就绪")
 
 
 def main(argv):

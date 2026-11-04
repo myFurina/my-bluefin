@@ -82,6 +82,35 @@ def record_provisioned(apps):
     except Exception as e:
         print(f"[error] Failed to append to {PROVISIONED_PATH}: {e}", file=sys.stderr)
 
+def install_app_with_fallback(repo_name, app, timeout_sec=180):
+    cmd = ["flatpak", "install", "--system", "-y", "--noninteractive", repo_name, app]
+    # 1. 优先尝试镜像加速安装
+    try:
+        res = subprocess.run(cmd, timeout=timeout_sec)
+        if res.returncode == 0:
+            return True
+        print(f"[warn] {app} 镜像安装返回异常码 {res.returncode}，切换官方源兜底...", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        print(f"[warn] {app} 镜像下载超过 {timeout_sec} 秒挂死，正在终止进程并切换官方源兜底...", file=sys.stderr)
+        subprocess.run(["pkill", "-9", "-f", f"flatpak.*install.*{app}"], check=False)
+
+    # 2. 官方源兜底：临时卸下 contenturl 镜像加速配置，直连官方 Fastly CDN 节点
+    print(f"[info] 正在通过官方源 (Fastly CDN) 为 {app} 执行兜底安装...", file=sys.stderr)
+    subprocess.run(["ostree", "config", "--repo=/var/lib/flatpak/repo", "unset", f'remote "{repo_name}".contenturl'], check=False)
+    try:
+        res_fallback = subprocess.run(cmd, timeout=300)
+        success = (res_fallback.returncode == 0)
+    except subprocess.TimeoutExpired:
+        print(f"[error] {app} 官方源安装超时", file=sys.stderr)
+        subprocess.run(["pkill", "-9", "-f", f"flatpak.*install.*{app}"], check=False)
+        success = False
+    finally:
+        # 恢复镜像加速配置
+        subprocess.run(["ostree", "config", "--repo=/var/lib/flatpak/repo", "set",
+                        f'remote "{repo_name}".contenturl', "https://mirrors.ustc.edu.cn/flathub"], check=False)
+
+    return success
+
 def main():
     if not os.path.exists(CONFIG_PATH):
         print(f"[info] Config {CONFIG_PATH} not found, exiting.", file=sys.stderr)
@@ -102,7 +131,7 @@ def main():
 
         repo = config.get("repo", {})
         repo_name = repo.get("name", "flathub")
-        repo_url = repo.get("url") or config.get("repo-url") or "https://mirrors.ustc.edu.cn/flathub"
+        repo_url = repo.get("url") or config.get("repo-url") or "https://dl.flathub.org/repo/"
         repo_title = repo.get("title") or "Flathub"
 
         # 确保系统级远程仓库已存在且启用
@@ -117,11 +146,19 @@ def main():
             )
 
         target_apps = config.get("install") or []
-        pending = [app for app in target_apps if app not in provisioned]
+        currently_installed = get_installed_flatpaks()
+
+        # 兼容处理：若目标应用已存在于系统中（例如来自基础镜像或 fedora 源），直接记录进历史清单，避免跨仓库安装冲突
+        pre_existing = [app for app in target_apps if app in currently_installed and app not in provisioned]
+        if pre_existing:
+            record_provisioned(pre_existing)
+            provisioned.update(pre_existing)
+
+        pending = [app for app in target_apps if app not in provisioned and app not in currently_installed]
 
         # 核心防复活保障：所有在清单里的应用只要曾经推介过，即便用户已卸载，也坚决不再重新安装
         if not pending:
-            print(f"[info] 全部 {len(target_apps)} 个目标应用均已在历史推介清单中，无需重复安装。")
+            print(f"[info] 全部 {len(target_apps)} 个目标应用均已在历史推介清单或已安装，无需重复处理。")
             continue
 
         print(f"[info] 发现 {len(pending)} 个全新加入的应用需要安装: {pending}")
@@ -130,19 +167,24 @@ def main():
             notify_user("系统应用更新", f"正在为您自动安装新系统新增的 {len(pending)} 个应用...")
 
         cmd = ["flatpak", "install", "--system", "-y", "--noninteractive", repo_name] + pending
-        res = subprocess.run(cmd)
+        try:
+            res = subprocess.run(cmd, timeout=300)
+            batch_success = (res.returncode == 0)
+        except subprocess.TimeoutExpired:
+            print("[warn] 批量安装出现网络超时停滞，自动转入逐一容错与官方兜底模式...", file=sys.stderr)
+            subprocess.run(["pkill", "-9", "-f", "flatpak.*install"], check=False)
+            batch_success = False
 
         # 仅将确实成功部署的应用记录进历史清单
         currently_installed = get_installed_flatpaks()
         succeeded = [app for app in pending if app in currently_installed]
 
-        # 批处理若遇部分失败，针对未安装的应用逐一重试安装，杜绝单个应用故障阻断整个清单
-        if res.returncode != 0 and len(succeeded) < len(pending):
+        # 批处理若遇部分失败，针对未安装的应用逐一执行容错与官方源兜底重试
+        if not batch_success and len(succeeded) < len(pending):
             remaining = [app for app in pending if app not in currently_installed]
-            print(f"[warn] 批量安装未完全成功，正在对剩余 {len(remaining)} 个应用执行逐一容错部署...", file=sys.stderr)
+            print(f"[warn] 正在对未就绪的 {len(remaining)} 个应用执行逐一容错与官方源兜底部署...", file=sys.stderr)
             for app in remaining:
-                sub_res = subprocess.run(["flatpak", "install", "--system", "-y", "--noninteractive", repo_name, app])
-                if sub_res.returncode == 0:
+                if install_app_with_fallback(repo_name, app):
                     succeeded.append(app)
 
         if succeeded:
