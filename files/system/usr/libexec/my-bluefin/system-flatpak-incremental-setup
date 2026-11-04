@@ -129,12 +129,21 @@ def main():
         if config.get("notify", True):
             notify_user("系统应用更新", f"正在为您自动安装新系统新增的 {len(pending)} 个应用...")
 
-        cmd = ["flatpak", "install", "--system", "--noninteractive", repo_name] + pending
+        cmd = ["flatpak", "install", "--system", "-y", "--noninteractive", repo_name] + pending
         res = subprocess.run(cmd)
 
         # 仅将确实成功部署的应用记录进历史清单
         currently_installed = get_installed_flatpaks()
         succeeded = [app for app in pending if app in currently_installed]
+
+        # 批处理若遇部分失败，针对未安装的应用逐一重试安装，杜绝单个应用故障阻断整个清单
+        if res.returncode != 0 and len(succeeded) < len(pending):
+            remaining = [app for app in pending if app not in currently_installed]
+            print(f"[warn] 批量安装未完全成功，正在对剩余 {len(remaining)} 个应用执行逐一容错部署...", file=sys.stderr)
+            for app in remaining:
+                sub_res = subprocess.run(["flatpak", "install", "--system", "-y", "--noninteractive", repo_name, app])
+                if sub_res.returncode == 0:
+                    succeeded.append(app)
 
         if succeeded:
             record_provisioned(succeeded)
@@ -143,8 +152,10 @@ def main():
         if config.get("notify", True) and succeeded:
             notify_user("系统应用更新完成", f"已成功安装 {len(succeeded)} 个新应用！")
 
-        if res.returncode != 0 and len(succeeded) < len(pending):
-            print(f"[warn] 部分应用未能成功安装 (退出码: {res.returncode})", file=sys.stderr)
+        currently_installed = get_installed_flatpaks()
+        failed = [app for app in pending if app not in currently_installed]
+        if failed:
+            print(f"[warn] 仍有 {len(failed)} 个应用未能成功安装: {failed}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

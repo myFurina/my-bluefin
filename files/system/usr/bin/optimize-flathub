@@ -247,17 +247,7 @@ def configure_flatpak(dry_run):
 
     if dry_run:
         return
-    log("刷新 AppStream 元数据...")
-    try:
-        u = subprocess.run([FLATPAK, "update", "--appstream", "--system", "--noninteractive"],
-                           capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired:
-        log("AppStream 刷新超时，放弃")
-        return
-    if u.returncode == 0:
-        log("AppStream 刷新成功")
-    else:
-        log(f"AppStream 刷新失败: {(u.stderr or u.stdout).strip()[:300]}")
+    log("flathub 镜像与网络解析已就绪")
 
 
 def main(argv):

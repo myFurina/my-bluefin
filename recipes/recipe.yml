@@ -134,7 +134,7 @@ modules:
           - page.tesk.Refine                        # Refine 字体渲染与排版微调
           - io.github.flattool.Ignition             # Ignition 自启动与配置管理
           - com.ranfdev.DistroShelf                 # DistroShelf 容器分发与隔离管理
-          - io.github.kolunmi.Bazaar                # Bazaar 软件中心
+          # io.github.kolunmi.Bazaar 由系统 flatpak-preinstall 优先托管安装
           - org.gtk.Gtk3theme.adw-gtk3              # GTK3 Adwaita 现代主题兼容支持
           - org.gtk.Gtk3theme.adw-gtk3-dark         # GTK3 Adwaita 深色主题兼容支持
 

@@ -50,7 +50,23 @@ fi
     success_count=0
     for ext in "${pending_extensions[@]}"; do
         echo "--> 正在安装: ${ext}..." >> "${LOG_FILE}"
-        if code --install-extension "${ext}" --force >> "${LOG_FILE}" 2>&1; then
+
+        # 优先使用镜像预置的离线 .vsix 安装包（零网络依赖，秒装就绪）
+        local_vsix="/usr/share/ublue-os/vscode/extensions/${ext}.vsix"
+        if [ -f "${local_vsix}" ]; then
+            echo "    发现本地离线安装包: ${local_vsix}" >> "${LOG_FILE}"
+            target_install="${local_vsix}"
+        else
+            target_install="${ext}"
+        fi
+
+        # 若本地 Clash 代理端口可用，自动附加代理参数加速网络下载兜底
+        extra_args=()
+        if [ "${target_install}" = "${ext}" ] && curl -s --connect-timeout 1 http://127.0.0.1:7897 >/dev/null 2>&1; then
+            extra_args+=("--proxy-server=http://127.0.0.1:7897")
+        fi
+
+        if code --install-extension "${target_install}" ${extra_args[@]+"${extra_args[@]}"} --force >> "${LOG_FILE}" 2>&1; then
             echo "${ext}" >> "${PROVISIONED_FILE}"
             ((success_count++)) || true
             echo "✔ 成功安装: ${ext}" >> "${LOG_FILE}"

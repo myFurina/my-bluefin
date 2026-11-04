@@ -21,7 +21,7 @@ echo "==> 正在校准系统脚本权限、建立服务软链接并编译 GSetti
 chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules /usr/share/polkit-1/rules.d/50-libvirt-nopasswd.rules
 chmod 755 /usr/bin/fcitx5-prestart-setup /usr/bin/optimize-flathub
 chmod 755 /usr/libexec/my-bluefin/* 2>/dev/null || true
-chmod 644 /usr/share/ublue-os/grub2/user.cfg 2>/dev/null || true
+chmod 644 /usr/share/ublue-os/grub2/user.cfg /usr/share/ublue-os/vscode/extensions.list /usr/share/ublue-os/vscode/extensions/*.vsix 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/just/60-custom.just /usr/share/applications/system-reset.desktop 2>/dev/null || true
 ln -sf /usr/bin/optimize-flathub /usr/bin/optimize-network
 chmod 755 /usr/share/ublue-os/user-setup.hooks.d/*.sh 2>/dev/null || true
