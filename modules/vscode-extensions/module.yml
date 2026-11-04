@@ -1,0 +1,9 @@
+name: vscode-extensions
+shortdesc: 声明式配置 VS Code 预装扩展清单，配合首登钩子实现用户空间后台静默安装与防复活增量自愈。
+example: |
+  - type: vscode-extensions
+    source: local
+    install:
+      - ms-ceintl.vscode-language-pack-zh-hans
+      - esbenp.prettier-vscode
+      - eamodio.gitlens

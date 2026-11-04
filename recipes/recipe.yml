@@ -70,6 +70,11 @@ modules:
   - type: antigravity
     source: local
 
+  - type: vscode-extensions
+    source: local
+    install:
+      - ms-ceintl.vscode-language-pack-zh-hans
+
   # 5. 系统底层规范化与收尾脚本
   - type: script
     scripts:

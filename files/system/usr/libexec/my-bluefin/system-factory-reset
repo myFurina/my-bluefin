@@ -99,11 +99,14 @@ do_reset_terminal_env() {
         cp -f /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.wezterm.lua"
         chmod 644 "$HOME/.wezterm.lua"
     fi
-    rm -f "$HOME/.config/opencode-initialized"
+    rm -f "$HOME/.config/opencode-initialized" "$HOME/.local/state/vscode-provisioned.list"
     if [ -x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh ]; then
         /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh 2>/dev/null || true
     fi
-    log_success "终端环境、OpenCode 启动器与 Homebrew 环境已恢复出厂配置！"
+    if [ -x /usr/share/ublue-os/user-setup.hooks.d/40-vscode-extensions.sh ]; then
+        /usr/share/ublue-os/user-setup.hooks.d/40-vscode-extensions.sh 2>/dev/null || true
+    fi
+    log_success "终端环境、OpenCode 启动器、Homebrew 与 VS Code 扩展已恢复出厂配置！"
 }
 
 # ------------------------------------------------------------------------------
@@ -184,6 +187,9 @@ mode_nuclear_reset() {
     fi
     if [ -x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh ]; then
         /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh 2>/dev/null || true
+    fi
+    if [ -x /usr/share/ublue-os/user-setup.hooks.d/40-vscode-extensions.sh ]; then
+        /usr/share/ublue-os/user-setup.hooks.d/40-vscode-extensions.sh 2>/dev/null || true
     fi
 
     log_success "主目录已彻底重构为纯净开箱状态！"

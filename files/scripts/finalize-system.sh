@@ -24,7 +24,7 @@ chmod 755 /usr/libexec/my-bluefin/* 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/grub2/user.cfg 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/just/60-custom.just /usr/share/applications/system-reset.desktop 2>/dev/null || true
 ln -sf /usr/bin/optimize-flathub /usr/bin/optimize-network
-chmod 755 /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh
+chmod 755 /usr/share/ublue-os/user-setup.hooks.d/*.sh 2>/dev/null || true
 
 mkdir -p /usr/lib/systemd/user/graphical-session.target.wants /usr/lib/systemd/user/gnome-session.target.wants /usr/lib/systemd/system/multi-user.target.wants /usr/lib/systemd/system/sockets.target.wants
 ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/graphical-session.target.wants/fcitx5.service
