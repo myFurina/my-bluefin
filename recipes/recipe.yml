@@ -73,7 +73,22 @@ modules:
   - type: vscode-extensions
     source: local
     install:
+      # 界面汉化与项目管理
       - ms-ceintl.vscode-language-pack-zh-hans
+      - alefragnani.project-manager
+
+      # C/C++ 全套核心开发套件
+      - ms-vscode.cpptools-extension-pack
+      - ms-vscode.cpptools
+      - ms-vscode.cmake-tools
+      - ms-vscode.cpp-devtools
+      - ms-vscode.cpptools-themes
+
+      # Python 全套现代开发套件
+      - ms-python.python
+      - ms-python.vscode-pylance
+      - ms-python.debugpy
+      - ms-python.vscode-python-envs
 
   # 5. 系统底层规范化与收尾脚本
   - type: script
