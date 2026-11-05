@@ -6,21 +6,38 @@ case "$(id -u -n 2>/dev/null)" in
     gdm|gdm-greeter|gnome-initial-setup) exit 0 ;;
 esac
 
-# 1. 确保 Fcitx5 单雾凇配置与 LocalSend 渲染所需的回退中文字体第一时间到位
-/usr/bin/fcitx5-prestart-setup 2>/dev/null || true
-mkdir -p "$HOME/.local/share/fonts" "$HOME/.local/state"
-if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
-    cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
+mkdir -p "$HOME/.local/state" "$HOME/.local/bin"
+
+# 1. 桌面出厂环境一次性初装（仅在首登时执行一次，成功后永久跳过，避免每次登录循环激活扩展）
+DESKTOP_INIT_FLAG="$HOME/.local/state/.desktop-firstboot-done"
+if [ ! -f "${DESKTOP_INIT_FLAG}" ]; then
+    # 1.1 补齐 LocalSend 等应用所需的回退中文字体
+    mkdir -p "$HOME/.local/share/fonts"
+    if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
+        cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
+    fi
+
+    # 1.2 下发 WezTerm 默认配置并静默 Bluefin 终端 MOTD
+    mkdir -p "$HOME/.config/wezterm"
+    touch "$HOME/.config/no-show-user-motd"
+    if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
+        cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
+    fi
+
+    # 1.3 激活系统级预置 GNOME 扩展（出厂首登初始化一次即可）
+    if [ -d "/usr/share/gnome-shell/extensions" ]; then
+        for ext_path in /usr/share/gnome-shell/extensions/*; do
+            if [ -d "${ext_path}" ]; then
+                ext_uuid=$(basename "${ext_path}")
+                gnome-extensions enable "${ext_uuid}" 2>/dev/null || true
+            fi
+        done
+    fi
+
+    touch "${DESKTOP_INIT_FLAG}"
 fi
 
-# 2. 确保 WezTerm 终端配置下发至用户目录，并默认关闭 Bluefin 终端欢迎横幅 (MOTD)
-mkdir -p "$HOME/.config/wezterm" "$HOME/.local/bin"
-touch "$HOME/.config/no-show-user-motd"
-if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
-    cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
-fi
-
-# 2.5 托管 OpenCode V2 至用户可写目录 ~/.local/bin/opencode（首次自动部署，未卸载则随镜像自动更新，卸载后不反弹）
+# 2. 托管 OpenCode V2 至用户可写目录 ~/.local/bin/opencode（未安装则装，有镜像更新则更新）
 if [ ! -f "$HOME/.config/opencode-initialized" ] && [ -f /usr/share/ublue-os/my-brew/opencode ]; then
     cp -f /usr/share/ublue-os/my-brew/opencode "$HOME/.local/bin/opencode"
     chmod 755 "$HOME/.local/bin/opencode"
@@ -28,16 +45,6 @@ if [ ! -f "$HOME/.config/opencode-initialized" ] && [ -f /usr/share/ublue-os/my-
 elif [ -f "$HOME/.local/bin/opencode" ] && [ -f /usr/share/ublue-os/my-brew/opencode ]; then
     cp -u /usr/share/ublue-os/my-brew/opencode "$HOME/.local/bin/opencode"
     chmod 755 "$HOME/.local/bin/opencode"
-fi
-
-# 2.8 确保系统级预置扩展在用户会话中就绪激活（避免存量用户的 dconf 缓存阻断系统出厂预设）
-if [ -d "/usr/share/gnome-shell/extensions" ]; then
-    for ext_path in /usr/share/gnome-shell/extensions/*; do
-        if [ -d "${ext_path}" ]; then
-            ext_uuid=$(basename "${ext_path}")
-            gnome-extensions enable "${ext_uuid}" 2>/dev/null || true
-        fi
-    done
 fi
 
 # 3. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量及首次就绪检测

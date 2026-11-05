@@ -99,7 +99,7 @@ do_reset_terminal_env() {
         cp -f /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.wezterm.lua"
         chmod 644 "$HOME/.wezterm.lua"
     fi
-    rm -f "$HOME/.config/opencode-initialized" "$HOME/.local/state/vscode-provisioned.list"
+    rm -f "$HOME/.config/opencode-initialized" "$HOME/.local/state/vscode-provisioned.list" "$HOME/.local/state/.desktop-firstboot-done"
     if [ -x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh ]; then
         /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh 2>/dev/null || true
     fi

@@ -2,9 +2,28 @@
 set -euo pipefail
 
 SRC="/usr/share/ublue-os/grub2/user.cfg"
+STATE_DIR="/var/lib/my-bluefin"
+HASH_FILE="${STATE_DIR}/grub-user-cfg.sha256"
 
 if [ ! -f "${SRC}" ]; then
     exit 0
+fi
+
+mkdir -p "${STATE_DIR}"
+current_hash=$(sha256sum "${SRC}" | awk '{print $1}')
+
+# 若镜像源文件指纹与上次同步一致，且目标文件均完好存在，毫秒级直接退出，免去重复开销
+if [ -f "${HASH_FILE}" ] && [ "$(cat "${HASH_FILE}")" = "${current_hash}" ]; then
+    targets_ok=true
+    for TARGET_DIR in "/boot/grub2" "/boot/efi/EFI/fedora"; do
+        if [ -d "${TARGET_DIR}" ] && [ ! -f "${TARGET_DIR}/user.cfg" ]; then
+            targets_ok=false
+            break
+        fi
+    done
+    if [ "${targets_ok}" = "true" ]; then
+        exit 0
+    fi
 fi
 
 # 在宿主机引导分区就绪后，安全同步自定义 user.cfg（包含 Windows 双系统引导项与超时时间）
@@ -18,3 +37,5 @@ for TARGET_DIR in "/boot/grub2" "/boot/efi/EFI/fedora"; do
         fi
     fi
 done
+
+echo "${current_hash}" > "${HASH_FILE}"

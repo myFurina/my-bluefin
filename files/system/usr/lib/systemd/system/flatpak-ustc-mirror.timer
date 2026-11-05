@@ -1,10 +1,11 @@
 [Unit]
-Description=Hourly Flathub CDN IP optimization timer
+Description=Daily Flathub CDN IP and Mirror Optimization Timer
+Documentation=https://github.com/myFurina/my-bluefin
 After=network-online.target
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=1h
+OnBootSec=5min
+OnUnitActiveSec=1d
 Persistent=true
 
 [Install]

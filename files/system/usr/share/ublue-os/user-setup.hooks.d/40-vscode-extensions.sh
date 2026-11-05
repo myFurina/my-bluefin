@@ -17,10 +17,26 @@ fi
 mkdir -p "$HOME/.local/state"
 touch "${PROVISIONED_FILE}"
 
-# 2. 查询 VS Code 当前实际已安装的扩展（统一转小写比对，避免大小写差异）
+# 2. 超轻量前置检查（纯文本对比，不拉起任何外部进程，耗时 < 1ms）
+# 若系统预置清单中的所有扩展已在用户的历史清单中，毫秒级直接退出，彻底消除 Electron CLI 进程开销
+all_provisioned=true
+while IFS= read -r ext || [ -n "${ext}" ]; do
+    [[ -z "${ext}" || "${ext}" =~ ^[[:space:]]*# ]] && continue
+    ext_clean=$(echo "${ext}" | tr -d '[:space:]')
+    if ! grep -Fxq "${ext_clean}" "${PROVISIONED_FILE}" 2>/dev/null; then
+        all_provisioned=false
+        break
+    fi
+done < "${EXT_LIST}"
+
+if [ "${all_provisioned}" = "true" ]; then
+    exit 0
+fi
+
+# 3. 仅在确实存在未记录的新扩展时，才拉起 VS Code 查询当前实际已装扩展（统一转小写比对，避免大小写差异）
 installed_exts=$(code --list-extensions 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
 
-# 3. 自动同步：若扩展实际上已经在 VS Code 中，直接同步记录到已推介清单，杜绝重复弹窗
+# 4. 自动同步：若扩展实际上已经在 VS Code 中，直接同步记录到已推介清单，杜绝重复弹窗
 if [ -n "${installed_exts}" ]; then
     while IFS= read -r ext || [ -n "${ext}" ]; do
         [[ -z "${ext}" || "${ext}" =~ ^[[:space:]]*# ]] && continue
@@ -35,7 +51,7 @@ if [ -n "${installed_exts}" ]; then
     done < "${EXT_LIST}"
 fi
 
-# 4. 计算真正需要增量安装的扩展（排除历史已推介 与 实际已安装的项目）
+# 5. 计算真正需要增量安装的扩展（排除历史已推介 与 实际已安装的项目）
 pending_extensions=()
 while IFS= read -r ext || [ -n "${ext}" ]; do
     [[ -z "${ext}" || "${ext}" =~ ^[[:space:]]*# ]] && continue
@@ -61,7 +77,7 @@ if [ ${#pending_extensions[@]} -eq 0 ]; then
     exit 0
 fi
 
-# 5. 后台异步静默安装（使用独立子进程，完全不阻碍图形桌面就绪，静默无弹窗）
+# 6. 后台异步静默安装（使用独立子进程，完全不阻碍图形桌面就绪，静默无弹窗）
 (
     # 等待桌面网络就绪
     sleep 5
