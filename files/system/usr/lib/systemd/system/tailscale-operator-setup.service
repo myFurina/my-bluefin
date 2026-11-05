@@ -1,0 +1,13 @@
+[Unit]
+Description=Auto-configure Tailscale Operator for Desktop Administrator
+Documentation=https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission
+After=tailscaled.service
+Wants=tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/my-bluefin/tailscale-operator-setup
+
+[Install]
+WantedBy=multi-user.target

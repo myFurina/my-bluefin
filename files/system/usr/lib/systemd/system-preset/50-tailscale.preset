@@ -1,1 +1,2 @@
 enable tailscaled.service
+enable tailscale-operator-setup.service

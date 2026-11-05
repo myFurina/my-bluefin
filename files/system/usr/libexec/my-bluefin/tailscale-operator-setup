@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ==============================================================================
+# Tailscale 桌面管理员 Operator 自动授权服务
+# - 纯后台静默执行，零阻塞系统启动
+# - 自动将首个 wheel 组桌面主用户设置为 Tailscale Operator，使托盘与 CLI 开箱免 sudo
+# ==============================================================================
+
+# 1. 基础环境核验
+if ! command -v tailscale >/dev/null 2>&1; then
+    exit 0
+fi
+
+sock="/run/tailscale/tailscaled.sock"
+count=0
+while [ ! -S "$sock" ] && [ $count -lt 15 ]; do
+    sleep 1
+    count=$((count + 1))
+done
+
+if [ ! -S "$sock" ]; then
+    echo "[tailscale-operator] tailscaled.sock 未就绪，跳过配置。"
+    exit 0
+fi
+
+# 2. 探测桌面管理员用户（UID >= 1000 且属于 wheel 组）
+target_user=""
+
+# A. 优先从 loginctl 探测当前已登录且属于 wheel 组的活跃用户
+if command -v loginctl >/dev/null 2>&1; then
+    while read -r u; do
+        if [ -n "$u" ] && id -nG "$u" 2>/dev/null | grep -qw "wheel"; then
+            target_user="$u"
+            break
+        fi
+    done < <(loginctl list-users --no-legend 2>/dev/null | awk '$1 >= 1000 {print $2}')
+fi
+
+# B. 若当前未登录，从 wheel 组中读取首个普通用户
+if [ -z "$target_user" ]; then
+    wheel_members=$(getent group wheel 2>/dev/null | awk -F: '{print $4}' | tr ',' ' ')
+    for u in $wheel_members; do
+        uid=$(id -u "$u" 2>/dev/null || echo 0)
+        if [ "$uid" -ge 1000 ] && [ "$uid" -lt 60000 ]; then
+            target_user="$u"
+            break
+        fi
+    done
+fi
+
+# C. 兜底策略：查找系统中首个 UID >= 1000 的主目录用户
+if [ -z "$target_user" ]; then
+    target_user=$(getent passwd 2>/dev/null | awk -F: '$3 >= 1000 && $3 < 60000 && ($6 ~ /^\/(var\/)?home/) {print $1; exit}')
+fi
+
+if [ -z "$target_user" ]; then
+    echo "[tailscale-operator] 未检测到符合条件的桌面管理员，跳过配置。"
+    exit 0
+fi
+
+# 3. 幂等性检查：若已设置为该用户，则无需重复设置
+current_operator=$(tailscale debug prefs 2>/dev/null | jq -r '.OperatorUser // empty' 2>/dev/null || true)
+if [ "$current_operator" = "$target_user" ]; then
+    echo "[tailscale-operator] 当前 operator 已是 ${target_user}，保持就绪。"
+    exit 0
+fi
+
+# 4. 执行授权
+echo "[tailscale-operator] 正在将 Tailscale Operator 权限自动授予桌面管理员: ${target_user}..."
+if tailscale set --operator="${target_user}" 2>/dev/null; then
+    echo "[tailscale-operator] ✔ 成功将 Tailscale Operator 授予 ${target_user}。"
+else
+    echo "[tailscale-operator] ⚠ 设置过程异常，将在下次服务启动时重试。"
+fi
