@@ -2,74 +2,68 @@
 set -euo pipefail
 
 # ==============================================================================
-# Tailscale 桌面管理员 Operator 自动授权服务
-# - 纯后台静默执行，零阻塞系统启动
-# - 自动将首个 wheel 组桌面主用户设置为 Tailscale Operator，使托盘与 CLI 开箱免 sudo
+# Tailscale 桌面用户 Operator 一次性自动配置脚本
+# - 仅在未成功配置过时执行，成功后创建持久化标志，以后开机永久跳过
+# - 具备延迟等待机制，精准使用 loginctl 双重探测本地活跃桌面用户
+# - 成功即终结，失败则等下次开机再说
 # ==============================================================================
 
-# 1. 基础环境核验
-if ! command -v tailscale >/dev/null 2>&1; then
-    exit 0
-fi
+FLAG_FILE="/var/lib/tailscale/.operator-configured"
 
+# 1. 成功过就绝不再跑
+[ -f "$FLAG_FILE" ] && exit 0
+command -v tailscale >/dev/null 2>&1 || exit 0
+
+# 2. 等待 tailscaled.sock 套接字就绪（最多等待 15 秒）
 sock="/run/tailscale/tailscaled.sock"
 count=0
 while [ ! -S "$sock" ] && [ $count -lt 15 ]; do
     sleep 1
     count=$((count + 1))
 done
+[ -S "$sock" ] || exit 1
 
-if [ ! -S "$sock" ]; then
-    echo "[tailscale-operator] tailscaled.sock 未就绪，跳过配置。"
-    exit 0
-fi
+# 延迟 10 秒等待桌面环境与用户登录就绪
+sleep 10
 
-# 2. 探测桌面管理员用户（UID >= 1000 且属于 wheel 组）
-target_user=""
+# 3. 轮询探测桌面用户（严格使用 loginctl 精准探测规则）
+desktop_user=""
+for ((i=1; i<=25; i++)); do
+    # 规则 1: 严格匹配本地物理图形活跃会话 (x11/wayland, active=yes, remote=no)
+    desktop_user=$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}' | while read -r sid; do
+        [ -n "$sid" ] || continue
+        loginctl show-session "$sid" -p Name -p Type -p Active -p Remote --value 2>/dev/null | paste -sd' ' -
+    done | awk '($2=="x11" || $2=="wayland") && $3=="yes" && $4=="no" {print $1}' | sort -u | head -n 1 || true)
 
-# A. 优先从 loginctl 探测当前已登录且属于 wheel 组的活跃用户
-if command -v loginctl >/dev/null 2>&1; then
-    while read -r u; do
-        if [ -n "$u" ] && id -nG "$u" 2>/dev/null | grep -qw "wheel"; then
-            target_user="$u"
-            break
-        fi
-    done < <(loginctl list-users --no-legend 2>/dev/null | awk '$1 >= 1000 {print $2}')
-fi
+    # 规则 2: 若未抓到，探测拥有关联 Display 的真实普通用户 (UID 1000~65534)
+    if [ -z "$desktop_user" ]; then
+        for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd 2>/dev/null); do
+            d=$(loginctl show-user "$u" -p Display --value 2>/dev/null || true)
+            if [ -n "$d" ]; then
+                desktop_user="$u"
+                break
+            fi
+        done
+    fi
 
-# B. 若当前未登录，从 wheel 组中读取首个普通用户
-if [ -z "$target_user" ]; then
-    wheel_members=$(getent group wheel 2>/dev/null | awk -F: '{print $4}' | tr ',' ' ')
-    for u in $wheel_members; do
-        uid=$(id -u "$u" 2>/dev/null || echo 0)
-        if [ "$uid" -ge 1000 ] && [ "$uid" -lt 60000 ]; then
-            target_user="$u"
-            break
-        fi
-    done
-fi
+    # 过滤掉 gdm 等登录器与虚拟系统账号
+    case "$desktop_user" in
+        gdm|gdm-greeter|gnome-initial-setup|nobody|"") desktop_user="" ;;
+        *) break ;;
+    esac
+    sleep 2
+done
 
-# C. 兜底策略：查找系统中首个 UID >= 1000 的主目录用户
-if [ -z "$target_user" ]; then
-    target_user=$(getent passwd 2>/dev/null | awk -F: '$3 >= 1000 && $3 < 60000 && ($6 ~ /^\/(var\/)?home/) {print $1; exit}')
-fi
+# 本次若没抓到桌面用户（例如开机未登录），失败退出，等下次开机再说
+[ -z "$desktop_user" ] && exit 1
 
-if [ -z "$target_user" ]; then
-    echo "[tailscale-operator] 未检测到符合条件的桌面管理员，跳过配置。"
-    exit 0
-fi
-
-# 3. 幂等性检查：若已设置为该用户，则无需重复设置
-current_operator=$(tailscale debug prefs 2>/dev/null | jq -r '.OperatorUser // empty' 2>/dev/null || true)
-if [ "$current_operator" = "$target_user" ]; then
-    echo "[tailscale-operator] 当前 operator 已是 ${target_user}，保持就绪。"
-    exit 0
-fi
-
-# 4. 执行授权
-echo "[tailscale-operator] 正在将 Tailscale Operator 权限自动授予桌面管理员: ${target_user}..."
-if tailscale set --operator="${target_user}" 2>/dev/null; then
-    echo "[tailscale-operator] ✔ 成功将 Tailscale Operator 授予 ${target_user}。"
+# 4. 执行设置：成功则打标终结，失败则下次再说
+echo "[tailscale-operator] 检测到活跃桌面用户: ${desktop_user}，正在设置 Tailscale Operator..."
+if tailscale set --operator="${desktop_user}" 2>/dev/null; then
+    mkdir -p "$(dirname "$FLAG_FILE")"
+    touch "$FLAG_FILE"
+    echo "[tailscale-operator] ✔ 成功授权给 ${desktop_user}，生成完成标记，以后不再运行。"
 else
-    echo "[tailscale-operator] ⚠ 设置过程异常，将在下次服务启动时重试。"
+    echo "[tailscale-operator] ✖ 设置命令失败，不标记完成，下次开机重试。"
+    exit 1
 fi
