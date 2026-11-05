@@ -61,15 +61,10 @@ if [ ${#pending_extensions[@]} -eq 0 ]; then
     exit 0
 fi
 
-# 5. 后台异步静默安装（使用独立子进程，完全不阻碍图形桌面就绪）
+# 5. 后台异步静默安装（使用独立子进程，完全不阻碍图形桌面就绪，静默无弹窗）
 (
     # 等待桌面网络就绪
     sleep 5
-
-    # 桌面气泡提示
-    if command -v notify-send >/dev/null 2>&1; then
-        notify-send --app-name="VS Code" "正在自动配置环境" "后台正在为您静默安装 ${#pending_extensions[@]} 个预置扩展..." 2>/dev/null || true
-    fi
 
     echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 开始增量安装 VS Code 扩展: ${pending_extensions[*]}" >> "${LOG_FILE}"
 
@@ -111,8 +106,4 @@ fi
     done
 
     echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 扩展安装结束，成功: ${success_count}/${#pending_extensions[@]}" >> "${LOG_FILE}"
-
-    if [ ${success_count} -gt 0 ] && command -v notify-send >/dev/null 2>&1; then
-        notify-send --app-name="VS Code" "开发环境就绪" "已成功为您安装 ${success_count} 个 VS Code 扩展！" 2>/dev/null || true
-    fi
 ) >/dev/null 2>&1 &

@@ -78,15 +78,20 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mount_btrfs_pool() {
-    local btrfs_uuid
-    btrfs_uuid=$(findmnt -no UUID /var 2>/dev/null || findmnt -no UUID /home 2>/dev/null || true)
-    if [ -z "${btrfs_uuid}" ]; then
-        log_error "未能检测到底层 Btrfs 分区 UUID，无法执行快照操作。"
-        exit 1
-    fi
+    local btrfs_uuid btrfs_dev
+    btrfs_uuid=$(findmnt -no UUID /var 2>/dev/null || findmnt -no UUID /home 2>/dev/null || findmnt -no UUID /sysroot 2>/dev/null || true)
+    btrfs_dev=$(findmnt -no SOURCE /var 2>/dev/null | sed 's/\[.*\]//' || true)
 
     MNT_DIR=$(mktemp -d /run/btrfs-pool.XXXXXX)
-    mount -o subvolid=5 "/dev/disk/by-uuid/${btrfs_uuid}" "${MNT_DIR}"
+
+    if [ -n "${btrfs_uuid}" ] && [ -e "/dev/disk/by-uuid/${btrfs_uuid}" ]; then
+        mount -o subvolid=5 "/dev/disk/by-uuid/${btrfs_uuid}" "${MNT_DIR}"
+    elif [ -n "${btrfs_dev}" ] && [ -b "${btrfs_dev}" ]; then
+        mount -o subvolid=5 "${btrfs_dev}" "${MNT_DIR}"
+    else
+        log_error "未能检测到底层 Btrfs 分区，无法执行快照操作。"
+        exit 1
+    fi
 
     # 确保存放快照的隔离目录存在
     mkdir -p "${MNT_DIR}/.snapshots"

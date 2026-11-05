@@ -105,6 +105,7 @@ modules:
         install:
           # --- 核心网络与办公套件 ---
           - org.mozilla.firefox                     # 火狐浏览器（含全套非自由多媒体解码器）
+          - org.mozilla.thunderbird_esr             # Thunderbird ESR 官方长期支持版邮件客户端
           - org.onlyoffice.desktopeditors           # ONLYOFFICE 现代办公套件
           - org.localsend.localsend_app             # LocalSend 局域网跨设备极速快传
           - com.github.marktext.marktext            # MarkText 现代 Markdown 所见即所得编辑器
