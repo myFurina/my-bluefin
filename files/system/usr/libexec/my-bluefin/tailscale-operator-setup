@@ -3,9 +3,8 @@ set -euo pipefail
 
 # ==============================================================================
 # Tailscale 桌面用户 Operator 一次性自动配置脚本
-# - 仅在未成功配置过时执行，成功后创建持久化标志，以后开机永久跳过
-# - 具备延迟等待机制，精准使用 loginctl 双重探测本地活跃桌面用户
-# - 成功即终结，失败则等下次开机再说
+# - 随系统开机 tailscaled.service 就绪后单次执行（在用户登录前就绪）
+# - 成功后创建持久化标志 /var/lib/tailscale/.operator-configured，以后开机永久跳过
 # ==============================================================================
 
 FLAG_FILE="/var/lib/tailscale/.operator-configured"
@@ -23,46 +22,60 @@ while [ ! -S "$sock" ] && [ $count -lt 15 ]; do
 done
 [ -S "$sock" ] || exit 1
 
-# 延迟 10 秒等待桌面环境与用户登录就绪
-sleep 10
+# 3. 智能探测桌面管理员用户（UID 1000~65534，wheel 组成员，家目录存在于 /var/home 或 /home）
+detect_target_user() {
+    local target=""
 
-# 3. 轮询探测桌面用户（严格使用 loginctl 精准探测规则）
-desktop_user=""
-for ((i=1; i<=25; i++)); do
-    # 规则 1: 严格匹配本地物理图形活跃会话 (x11/wayland, active=yes, remote=no)
-    desktop_user=$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}' | while read -r sid; do
-        [ -n "$sid" ] || continue
-        loginctl show-session "$sid" -p Name -p Type -p Active -p Remote --value 2>/dev/null | paste -sd' ' -
-    done | awk '($2=="x11" || $2=="wayland") && $3=="yes" && $4=="no" {print $1}' | sort -u | head -n 1 || true)
+    # 策略 A（优先活跃会话）：若已有物理图形会话（x11/wayland, active=yes, non-remote）
+    if command -v loginctl >/dev/null 2>&1; then
+        target=$(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}' | while read -r sid; do
+            [ -n "$sid" ] || continue
+            loginctl show-session "$sid" -p Name -p Type -p Active -p Remote --value 2>/dev/null | paste -sd' ' -
+        done | awk '($2=="x11" || $2=="wayland") && $3=="yes" && $4=="no" {print $1}' | sort -u | head -n 1 || true)
 
-    # 规则 2: 若未抓到，探测拥有关联 Display 的真实普通用户 (UID 1000~65534)
-    if [ -z "$desktop_user" ]; then
-        for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd 2>/dev/null); do
-            d=$(loginctl show-user "$u" -p Display --value 2>/dev/null || true)
-            if [ -n "$d" ]; then
-                desktop_user="$u"
+        # 策略 B（检测关联 Display 的真实普通用户）
+        if [ -z "$target" ]; then
+            for u in $(awk -F: '$3>=1000 && $3<65534 {print $1}' /etc/passwd 2>/dev/null); do
+                d=$(loginctl show-user "$u" -p Display --value 2>/dev/null || true)
+                if [ -n "$d" ]; then
+                    target="$u"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    # 策略 C（开机亮屏阶段直接锁定）：提取 wheel 组中首个合法的桌面主用户
+    if [ -z "$target" ]; then
+        for u in $(getent group wheel 2>/dev/null | awk -F: '{print $4}' | tr ',' ' '); do
+            uid=$(id -u "$u" 2>/dev/null || echo 0)
+            home_dir=$(getent passwd "$u" 2>/dev/null | awk -F: '{print $6}' || true)
+            if [ "$uid" -ge 1000 ] && [ "$uid" -lt 65534 ] && [[ "$home_dir" =~ ^/(var/)?home/ ]]; then
+                target="$u"
                 break
             fi
         done
     fi
 
-    # 过滤掉 gdm 等登录器与虚拟系统账号
-    case "$desktop_user" in
-        gdm|gdm-greeter|gnome-initial-setup|nobody|"") desktop_user="" ;;
-        *) break ;;
-    esac
-    sleep 2
-done
+    echo "$target"
+}
 
-# 本次若没抓到桌面用户（例如开机未登录），失败退出，等下次开机再说
-[ -z "$desktop_user" ] && exit 1
+target_user=$(detect_target_user)
 
-# 4. 执行设置：成功则打标终结，失败则下次再说
-echo "[tailscale-operator] 检测到活跃桌面用户: ${desktop_user}，正在设置 Tailscale Operator..."
-if tailscale set --operator="${desktop_user}" 2>/dev/null; then
+# 过滤掉 gdm 等登录器与虚拟系统账号
+case "$target_user" in
+    gdm|gdm-greeter|gnome-initial-setup|nobody|"")
+        echo "[tailscale-operator] 未检测到有效的桌面管理员账号，本次退出。"
+        exit 1
+        ;;
+esac
+
+# 4. 执行一次性授权并生成永久标志
+echo "[tailscale-operator] 正在将 Tailscale Operator 授权给桌面管理员: ${target_user}..."
+if tailscale set --operator="${target_user}" 2>/dev/null; then
     mkdir -p "$(dirname "$FLAG_FILE")"
     touch "$FLAG_FILE"
-    echo "[tailscale-operator] ✔ 成功授权给 ${desktop_user}，生成完成标记，以后不再运行。"
+    echo "[tailscale-operator] ✔ 成功授权给 ${target_user}！已生成持久化标志，以后开机不再运行。"
 else
     echo "[tailscale-operator] ✖ 设置命令失败，不标记完成，下次开机重试。"
     exit 1

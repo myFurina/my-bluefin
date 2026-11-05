@@ -2,7 +2,7 @@
 Description=One-time Setup Tailscale Operator for Desktop User
 Documentation=https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission
 ConditionPathExists=!/var/lib/tailscale/.operator-configured
-After=tailscaled.service graphical.target
+After=tailscaled.service
 Wants=tailscaled.service
 
 [Service]
@@ -11,4 +11,4 @@ RemainAfterExit=yes
 ExecStart=/usr/libexec/my-bluefin/tailscale-operator-setup
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target

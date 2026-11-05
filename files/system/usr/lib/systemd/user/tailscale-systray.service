@@ -7,6 +7,8 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
+# 用户登录进桌面后平滑等待 5 秒，确保 GNOME Shell 状态栏扩展与网络/后台稳妥就绪后再加载托盘，绝不抢跑
+ExecStartPre=/usr/bin/sleep 5
 ExecStart=/usr/bin/tailscale systray
 Restart=on-failure
 RestartSec=5
