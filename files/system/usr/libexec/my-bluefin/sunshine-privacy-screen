@@ -59,6 +59,12 @@ turn_off_screen() {
     local max_b
     max_b=$(get_max_brightness)
 
+    if [ ! -w "${BACKLIGHT_DIR}/brightness" ]; then
+        notify_screen "Sunshine 防窥错误" "背光节点缺少写权限，请确认 udev 规则已生效"
+        echo "❌ 权限不足: 无法写入 ${BACKLIGHT_DIR}/brightness" >&2
+        return 1
+    fi
+
     # 仅在当前亮度大于 0 时记录，避免记录到 0
     mkdir -p "$STATE_DIR"
     if [ "$cur_b" -gt 0 ]; then
@@ -75,6 +81,12 @@ turn_on_screen() {
     local max_b
     max_b=$(get_max_brightness)
     local target_b=0
+
+    if [ ! -w "${BACKLIGHT_DIR}/brightness" ]; then
+        notify_screen "Sunshine 防窥错误" "背光节点缺少写权限，请确认 udev 规则已生效"
+        echo "❌ 权限不足: 无法写入 ${BACKLIGHT_DIR}/brightness" >&2
+        return 1
+    fi
 
     # 优先恢复此前记录的实际亮度
     if [ -f "$STATE_FILE" ]; then
