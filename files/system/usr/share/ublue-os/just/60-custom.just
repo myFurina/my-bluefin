@@ -45,17 +45,38 @@ snapshot-delete ID="":
 [group('Streaming')]
 sunshine ACTION="toggle":
     #!/usr/bin/env bash
+    conf_dir="$HOME/.config/sunshine"
+    conf_file="${conf_dir}/sunshine.conf"
+
+    ensure_tailscale_bind() {
+        ts_ip=$(tailscale ip -4 2>/dev/null || true)
+        if [ -z "$ts_ip" ]; then
+            echo "⚠️ 未检测到有效 Tailscale IP，为确保校园网完全隐身，已阻止启动。"
+            echo "💡 请先启动并登录 Tailscale（可运行 'tailscale status' 检查连接状态）。"
+            return 1
+        fi
+        mkdir -p "$conf_dir"
+        [ ! -f "$conf_file" ] && touch "$conf_file"
+        if grep -q "^[[:space:]]*bind_address" "$conf_file"; then
+            sed -i "s|^[[:space:]]*bind_address.*|bind_address = ${ts_ip}|" "$conf_file"
+        else
+            echo "bind_address = ${ts_ip}" >> "$conf_file"
+        fi
+        return 0
+    }
+
     case "{{ACTION}}" in
         "stop")
             systemctl --user stop sunshine
             echo "🛑 Sunshine 串流服务已停止"
             ;;
         "restart")
+            if ! ensure_tailscale_bind; then
+                exit 1
+            fi
             systemctl --user restart sunshine
-            echo "🔄 Sunshine 串流服务已重启"
-            ts_ip=$(tailscale ip -4 2>/dev/null || true)
-            echo "💻 本机配对控制台: https://localhost:47990"
-            [ -n "$ts_ip" ] && echo "🌐 Tailscale 远程控制台: https://${ts_ip}:47990"
+            echo "🔄 Sunshine 串流服务已重启（已绑定至 Tailscale: ${ts_ip}）"
+            echo "🌐 控制台地址: https://${ts_ip}:47990"
             ;;
         "status")
             systemctl --user status sunshine
@@ -65,20 +86,23 @@ sunshine ACTION="toggle":
             ;;
         *)
             if systemctl --user is-active --quiet sunshine; then
-                echo "🟢 Sunshine 正在运行中"
                 ts_ip=$(tailscale ip -4 2>/dev/null || true)
-                echo "💻 本机配对控制台: https://localhost:47990"
-                [ -n "$ts_ip" ] && echo "🌐 Tailscale 远程控制台: https://${ts_ip}:47990"
+                echo "🟢 Sunshine 正在运行中（校园网完全隐身模式）"
+                if [ -n "$ts_ip" ]; then
+                    echo "🌐 控制台地址: https://${ts_ip}:47990"
+                fi
                 echo "💡 提示: 若要停止服务，可运行 'ujust sunshine stop'"
             else
-                echo "🚀 正在启动 Sunshine 串流服务..."
+                if ! ensure_tailscale_bind; then
+                    exit 1
+                fi
+                echo "🚀 正在启动 Sunshine 串流服务（绑定至 Tailscale: ${ts_ip}，校园网完全隐身）..."
                 systemctl --user start sunshine
                 sleep 1
                 if systemctl --user is-active --quiet sunshine; then
                     echo "✅ Sunshine 启动成功！"
-                    ts_ip=$(tailscale ip -4 2>/dev/null || true)
-                    echo "💻 本机配对控制台: https://localhost:47990"
-                    [ -n "$ts_ip" ] && echo "🌐 Tailscale 远程控制台: https://${ts_ip}:47990"
+                    echo "🌐 Web 管理控制台: https://${ts_ip}:47990"
+                    echo "🔒 隐私安全状态: 物理校园网零暴露，仅限 Tailscale 设备可连接"
                     echo "💡 首次打开若提示自签名证书不安全，点击高级并继续即可。"
                 else
                     echo "⚠️ Sunshine 服务未能处于 active 状态，请通过 'ujust sunshine logs' 查看日志"
