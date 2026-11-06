@@ -1,0 +1,14 @@
+[Desktop Entry]
+Categories=Utility;
+Comment=Quickly toggle physical laptop screen blackout on or off
+Comment[zh_CN]=串流过程中一键开启或关闭电脑物理屏幕背光
+Exec=/usr/libexec/my-bluefin/sunshine-privacy-screen toggle
+Icon=display-symbolic
+Keywords=sunshine;privacy;blackout;screen;backlight;
+Keywords[zh_CN]=串流;防窥;熄屏;黑屏;背光;
+Name=Toggle Privacy Screen
+Name[zh_CN]=切换屏幕熄屏/亮屏
+StartupNotify=false
+Terminal=false
+Type=Application
+Version=1.0

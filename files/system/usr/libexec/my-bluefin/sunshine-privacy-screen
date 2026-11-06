@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Sunshine 物理屏幕防窥控制中心 (Sunshine Privacy Screen Controller)
+#
+# 功能特性：
+# 1. 物理背光断电级熄屏 (brightness=0 & bl_power=4)，不破坏 GPU 渲染与 KMS 抓屏
+# 2. 智能记忆与精准还原关屏前的原始亮度，断开或退出时无感复原
+# 3. 支持桌面端 / 串流内一键随时切换 (toggle)
+# ==============================================================================
+set -u
+
+STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sunshine"
+STATE_FILE="${STATE_DIR}/saved_brightness"
+
+# 动态探测活跃的背光控制设备
+BACKLIGHT_DIR=""
+if [ -d "/sys/class/backlight/nvidia_wmi_ec_backlight" ]; then
+    BACKLIGHT_DIR="/sys/class/backlight/nvidia_wmi_ec_backlight"
+else
+    for dev in /sys/class/backlight/*; do
+        if [ -d "$dev" ]; then
+            BACKLIGHT_DIR="$dev"
+            break
+        fi
+    done
+fi
+
+if [ -z "$BACKLIGHT_DIR" ] || [ ! -d "$BACKLIGHT_DIR" ]; then
+    echo "⚠️ 未在系统上找到可用的背光控制设备 (/sys/class/backlight)" >&2
+    exit 1
+fi
+
+get_max_brightness() {
+    cat "${BACKLIGHT_DIR}/max_brightness" 2>/dev/null || echo 800
+}
+
+get_current_brightness() {
+    cat "${BACKLIGHT_DIR}/brightness" 2>/dev/null || echo 0
+}
+
+get_bl_power() {
+    cat "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || echo 0
+}
+
+notify_screen() {
+    local title="$1"
+    local message="$2"
+    if [ -t 1 ]; then
+        echo "[$title] $message"
+    fi
+    if command -v notify-send >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-${DISPLAY:-}}" ]; then
+        notify-send -u normal -i display-symbolic "$title" "$message" 2>/dev/null || true
+    fi
+}
+
+turn_off_screen() {
+    local cur_b
+    cur_b=$(get_current_brightness)
+    local max_b
+    max_b=$(get_max_brightness)
+
+    # 仅在当前亮度大于 0 时记录，避免记录到 0
+    mkdir -p "$STATE_DIR"
+    if [ "$cur_b" -gt 0 ]; then
+        echo "$cur_b" > "$STATE_FILE"
+    fi
+
+    echo 4 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
+    echo 0 > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
+
+    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已熄灭（完全黑屏防窥生效）"
+}
+
+turn_on_screen() {
+    local max_b
+    max_b=$(get_max_brightness)
+    local target_b=0
+
+    # 优先恢复此前记录的实际亮度
+    if [ -f "$STATE_FILE" ]; then
+        target_b=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
+    fi
+
+    # 若未记录或数值无效，默认恢复为 50% 亮度
+    if [ -z "$target_b" ] || [ "$target_b" -le 0 ]; then
+        target_b=$(( max_b / 2 ))
+    fi
+
+    echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
+    echo "$target_b" > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
+
+    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度"
+}
+
+action="${1:-toggle}"
+
+case "$action" in
+    "off"|"black")
+        turn_off_screen
+        ;;
+    "on"|"restore")
+        turn_on_screen
+        ;;
+    "toggle")
+        cur_b=$(get_current_brightness)
+        cur_p=$(get_bl_power)
+        if [ "$cur_b" -eq 0 ] || [ "$cur_p" -ne 0 ]; then
+            turn_on_screen
+        else
+            turn_off_screen
+        fi
+        ;;
+    "status")
+        cur_b=$(get_current_brightness)
+        cur_p=$(get_bl_power)
+        max_b=$(get_max_brightness)
+        echo "背光设备: ${BACKLIGHT_DIR}"
+        echo "当前亮度: ${cur_b} / ${max_b}"
+        echo "供电状态: ${cur_p} (0=正常供电, 4=切断供电)"
+        if [ "$cur_b" -eq 0 ] || [ "$cur_p" -ne 0 ]; then
+            echo "当前显示: 纯黑熄屏中"
+        else
+            echo "当前显示: 正常亮屏中"
+        fi
+        ;;
+    *)
+        echo "用法: $0 {off|on|toggle|status}"
+        exit 1
+        ;;
+esac

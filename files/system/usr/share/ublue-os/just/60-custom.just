@@ -89,6 +89,20 @@ sunshine ACTION="toggle":
         else
             echo "csrf_allowed_origins = ${origins}" >> "$conf_file"
         fi
+
+        # 4. 自动注入与更新应用模板（提供“正常亮屏”与“熄屏防窥”双模式选择）
+        apps_file="${conf_dir}/apps.json"
+        template_apps="/usr/share/sunshine/apps.json"
+        if [ ! -f "$apps_file" ]; then
+            if [ -f "$template_apps" ]; then
+                cp "$template_apps" "$apps_file"
+            fi
+        elif ! grep -q "sunshine-privacy-screen" "$apps_file"; then
+            cp "$apps_file" "${apps_file}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+            if [ -f "$template_apps" ]; then
+                cp "$template_apps" "$apps_file"
+            fi
+        fi
         return 0
     }
 
@@ -118,6 +132,13 @@ sunshine ACTION="toggle":
                 xdg-open "https://${ts_ip}:47990" 2>/dev/null || true
             else
                 echo "⚠️ 未获取到有效 Tailscale IP，无法打开控制台"
+            fi
+            ;;
+        "screen")
+            if [ -x /usr/libexec/my-bluefin/sunshine-privacy-screen ]; then
+                /usr/libexec/my-bluefin/sunshine-privacy-screen toggle
+            else
+                echo "⚠️ 未找到 /usr/libexec/my-bluefin/sunshine-privacy-screen"
             fi
             ;;
         *)
