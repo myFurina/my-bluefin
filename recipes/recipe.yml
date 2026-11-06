@@ -15,6 +15,7 @@ modules:
       copr:
         - atim/starship                # 现代终端提示符 Starship
         - wezfurlong/wezterm-nightly   # WezTerm 每日构建源
+        - lizardbyte/beta              # LizardByte Sunshine 官方原生 RPM 源
     install:
       packages:
         - micro                        # 现代易用终端编辑器 Micro
@@ -23,6 +24,7 @@ modules:
         - code                         # 原生 VS Code
         - cloudflare-warp              # Cloudflare WARP 客户端
         - wezterm                      # WezTerm Nightly
+        - sunshine                     # 原生 Sunshine 游戏串流服务端 (支持 KMS 硬件零拷贝)
         - google-droid-sans-fonts      # 提供 LocalSend 必需的 DroidSansFallbackFull.ttf
         - fcitx5
         - fcitx5-chinese-addons        # 中文拼音、双拼、云拼音支持

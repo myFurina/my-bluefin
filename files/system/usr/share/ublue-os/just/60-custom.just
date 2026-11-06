@@ -40,3 +40,49 @@ snapshot-restore ID="":
 snapshot-delete ID="":
     #!/usr/bin/env bash
     /usr/libexec/my-bluefin/system-snapshot delete "{{ID}}"
+
+# Sunshine 游戏串流服务启停与管理 (Sunshine GameStream Management)
+[group('Streaming')]
+sunshine ACTION="toggle":
+    #!/usr/bin/env bash
+    case "{{ACTION}}" in
+        "stop")
+            systemctl --user stop sunshine
+            echo "🛑 Sunshine 串流服务已停止"
+            ;;
+        "restart")
+            systemctl --user restart sunshine
+            echo "🔄 Sunshine 串流服务已重启"
+            ts_ip=$(tailscale ip -4 2>/dev/null || true)
+            echo "💻 本机配对控制台: https://localhost:47990"
+            [ -n "$ts_ip" ] && echo "🌐 Tailscale 远程控制台: https://${ts_ip}:47990"
+            ;;
+        "status")
+            systemctl --user status sunshine
+            ;;
+        "logs")
+            journalctl --user -u sunshine -f
+            ;;
+        *)
+            if systemctl --user is-active --quiet sunshine; then
+                echo "🟢 Sunshine 正在运行中"
+                ts_ip=$(tailscale ip -4 2>/dev/null || true)
+                echo "💻 本机配对控制台: https://localhost:47990"
+                [ -n "$ts_ip" ] && echo "🌐 Tailscale 远程控制台: https://${ts_ip}:47990"
+                echo "💡 提示: 若要停止服务，可运行 'ujust sunshine stop'"
+            else
+                echo "🚀 正在启动 Sunshine 串流服务..."
+                systemctl --user start sunshine
+                sleep 1
+                if systemctl --user is-active --quiet sunshine; then
+                    echo "✅ Sunshine 启动成功！"
+                    ts_ip=$(tailscale ip -4 2>/dev/null || true)
+                    echo "💻 本机配对控制台: https://localhost:47990"
+                    [ -n "$ts_ip" ] && echo "🌐 Tailscale 远程控制台: https://${ts_ip}:47990"
+                    echo "💡 首次打开若提示自签名证书不安全，点击高级并继续即可。"
+                else
+                    echo "⚠️ Sunshine 服务未能处于 active 状态，请通过 'ujust sunshine logs' 查看日志"
+                fi
+            fi
+            ;;
+    esac

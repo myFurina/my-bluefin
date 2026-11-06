@@ -23,8 +23,15 @@ chmod 755 /usr/bin/fcitx5-prestart-setup /usr/bin/optimize-flathub
 chmod 755 /usr/libexec/my-bluefin/* 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/grub2/user.cfg /usr/share/ublue-os/vscode/extensions.list /usr/share/ublue-os/vscode/extensions/*.vsix 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/just/60-custom.just /usr/share/applications/system-reset.desktop /usr/share/applications/system-snapshot.desktop 2>/dev/null || true
+chmod 644 /usr/lib/udev/rules.d/60-sunshine.rules 2>/dev/null || true
 ln -sf /usr/bin/optimize-flathub /usr/bin/optimize-network
 chmod 755 /usr/share/ublue-os/user-setup.hooks.d/*.sh 2>/dev/null || true
+
+# 为原生 Sunshine 固化 KMS 抓屏特权 (CAP_SYS_ADMIN)
+if [ -f /usr/bin/sunshine ]; then
+    echo "==> 正在为原生 Sunshine 赋予 KMS 硬件捕获特权 (cap_sys_admin)..."
+    setcap cap_sys_admin+p /usr/bin/sunshine || true
+fi
 
 mkdir -p /usr/lib/systemd/user/graphical-session.target.wants /usr/lib/systemd/user/gnome-session.target.wants /usr/lib/systemd/system/multi-user.target.wants /usr/lib/systemd/system/sockets.target.wants
 ln -sf /usr/lib/systemd/user/fcitx5.service /usr/lib/systemd/user/graphical-session.target.wants/fcitx5.service
