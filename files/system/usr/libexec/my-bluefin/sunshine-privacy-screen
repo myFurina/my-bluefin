@@ -12,6 +12,7 @@ set -u
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sunshine"
 STATE_FILE="${STATE_DIR}/saved_brightness"
 INHIBIT_PID_FILE="${STATE_DIR}/inhibit.pid"
+GUARDIAN_PID_FILE="${STATE_DIR}/guardian.pid"
 
 start_idle_inhibitor() {
     stop_idle_inhibitor
@@ -29,6 +30,36 @@ stop_idle_inhibitor() {
             kill "$pid" 2>/dev/null || true
         fi
         rm -f "$INHIBIT_PID_FILE"
+    fi
+}
+
+start_brightness_guardian() {
+    stop_brightness_guardian
+    # 启动后台守护死循环（每 200ms 强制锁定背光与供电为 0，彻底封死 Fn+亮度加/减 与 电源插拔唤醒）
+    (
+        while true; do
+            cur_b=$(cat "${BACKLIGHT_DIR}/brightness" 2>/dev/null || echo 0)
+            cur_p=$(cat "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || echo 0)
+            if [ "$cur_b" -ne 0 ]; then
+                echo 0 > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
+            fi
+            if [ "$cur_p" -ne 4 ]; then
+                echo 4 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
+            fi
+            sleep 0.2
+        done
+    ) &
+    echo $! > "$GUARDIAN_PID_FILE"
+}
+
+stop_brightness_guardian() {
+    if [ -f "$GUARDIAN_PID_FILE" ]; then
+        local pid
+        pid=$(cat "$GUARDIAN_PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+        rm -f "$GUARDIAN_PID_FILE"
     fi
 }
 
@@ -94,8 +125,11 @@ turn_off_screen() {
     echo 4 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo 0 > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
-    # 抑制 GNOME 自动熄屏与系统休眠，保障手机串流满血不掉线
+    # 1. 抑制 GNOME 自动熄屏与系统休眠，保障手机串流满血不掉线
     start_idle_inhibitor
+
+    # 2. 启动背光死锁守护进程（防 Fn+亮度加/减 物理按键与插拔电源点亮屏幕）
+    start_brightness_guardian
 
     notify_screen "Sunshine 防窥模式" "电脑物理屏幕已熄灭（完全黑屏防窥生效）"
 }
@@ -124,8 +158,11 @@ turn_on_screen() {
     echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo "$target_b" > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
-    # 释放 GNOME 抑制锁，恢复系统正常节能策略
+    # 1. 释放 GNOME 抑制锁，恢复系统正常节能策略
     stop_idle_inhibitor
+
+    # 2. 终止背光死锁守护进程
+    stop_brightness_guardian
 
     notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度"
 }

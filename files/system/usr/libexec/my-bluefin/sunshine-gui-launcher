@@ -107,6 +107,9 @@ action="${1:-start}"
 case "$action" in
     "stop")
         systemctl --user stop "$svc"
+        if [ -x /usr/libexec/my-bluefin/sunshine-privacy-screen ]; then
+            /usr/libexec/my-bluefin/sunshine-privacy-screen on >/dev/null 2>&1 || true
+        fi
         notify_desktop "normal" "$APP_TITLE" "🛑 Sunshine 串流服务已安全停止。"
         ;;
     "restart")
