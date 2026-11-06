@@ -96,8 +96,10 @@ do_reset_flatpaks() {
 do_reset_terminal_env() {
     log_info "正在恢复 WezTerm 终端配置、OpenCode 与 Homebrew 环境..."
     if [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
-        cp -f /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.wezterm.lua"
-        chmod 644 "$HOME/.wezterm.lua"
+        mkdir -p "$HOME/.config/wezterm"
+        rm -f "$HOME/.wezterm.lua"
+        cp -f /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
+        chmod 644 "$HOME/.config/wezterm/wezterm.lua"
     fi
     rm -f "$HOME/.config/opencode-initialized" "$HOME/.local/state/vscode-provisioned.list" "$HOME/.local/state/.desktop-firstboot-done"
     if [ -x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh ]; then

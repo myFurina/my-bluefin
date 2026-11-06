@@ -7,7 +7,6 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/optimize-flathub
-RemainAfterExit=yes
 TimeoutSec=60
 
 [Install]

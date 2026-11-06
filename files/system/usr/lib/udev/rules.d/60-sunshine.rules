@@ -1,3 +1,2 @@
 KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
 ACTION=="add|change", SUBSYSTEM=="backlight", RUN+="/usr/bin/chmod 666 /sys/class/backlight/%k/brightness /sys/class/backlight/%k/bl_power"
-SUBSYSTEM=="backlight", RUN+="/usr/bin/chmod 666 /sys/class/backlight/%k/brightness /sys/class/backlight/%k/bl_power"

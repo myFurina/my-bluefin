@@ -8,6 +8,7 @@ My-Bluefin System Flatpak Incremental Provisioner
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import yaml
@@ -82,27 +83,38 @@ def record_provisioned(apps):
     except Exception as e:
         print(f"[error] Failed to append to {PROVISIONED_PATH}: {e}", file=sys.stderr)
 
+def run_with_process_group_timeout(cmd, timeout_sec):
+    """在独立进程组中执行命令，超时后精准清理整棵子进程树，绝不误杀系统其他进程"""
+    proc = subprocess.Popen(cmd, start_new_session=True)
+    try:
+        return proc.wait(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.wait()
+        raise
+
 def install_app_with_fallback(repo_name, app, timeout_sec=180):
     cmd = ["flatpak", "install", "--system", "-y", "--noninteractive", repo_name, app]
     # 1. 优先尝试镜像加速安装
     try:
-        res = subprocess.run(cmd, timeout=timeout_sec)
-        if res.returncode == 0:
+        ret = run_with_process_group_timeout(cmd, timeout_sec)
+        if ret == 0:
             return True
-        print(f"[warn] {app} 镜像安装返回异常码 {res.returncode}，切换官方源兜底...", file=sys.stderr)
+        print(f"[warn] {app} 镜像安装返回异常码 {ret}，切换官方源兜底...", file=sys.stderr)
     except subprocess.TimeoutExpired:
-        print(f"[warn] {app} 镜像下载超过 {timeout_sec} 秒挂死，正在终止进程并切换官方源兜底...", file=sys.stderr)
-        subprocess.run(["pkill", "-9", "-f", f"flatpak.*install.*{app}"], check=False)
+        print(f"[warn] {app} 镜像下载超过 {timeout_sec} 秒挂死，已终止子进程树并切换官方源兜底...", file=sys.stderr)
 
     # 2. 官方源兜底：临时卸下 contenturl 镜像加速配置，直连官方 Fastly CDN 节点
     print(f"[info] 正在通过官方源 (Fastly CDN) 为 {app} 执行兜底安装...", file=sys.stderr)
     subprocess.run(["ostree", "config", "--repo=/var/lib/flatpak/repo", "unset", f'remote "{repo_name}".contenturl'], check=False)
     try:
-        res_fallback = subprocess.run(cmd, timeout=300)
-        success = (res_fallback.returncode == 0)
+        ret_fallback = run_with_process_group_timeout(cmd, 300)
+        success = (ret_fallback == 0)
     except subprocess.TimeoutExpired:
         print(f"[error] {app} 官方源安装超时", file=sys.stderr)
-        subprocess.run(["pkill", "-9", "-f", f"flatpak.*install.*{app}"], check=False)
         success = False
     finally:
         # 恢复镜像加速配置
@@ -168,11 +180,10 @@ def main():
 
         cmd = ["flatpak", "install", "--system", "-y", "--noninteractive", repo_name] + pending
         try:
-            res = subprocess.run(cmd, timeout=300)
-            batch_success = (res.returncode == 0)
+            ret = run_with_process_group_timeout(cmd, 300)
+            batch_success = (ret == 0)
         except subprocess.TimeoutExpired:
             print("[warn] 批量安装出现网络超时停滞，自动转入逐一容错与官方兜底模式...", file=sys.stderr)
-            subprocess.run(["pkill", "-9", "-f", "flatpak.*install"], check=False)
             batch_success = False
 
         # 仅将确实成功部署的应用记录进历史清单

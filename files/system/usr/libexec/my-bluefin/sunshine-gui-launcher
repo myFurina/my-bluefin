@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Sunshine GUI Launcher & Lifecycle Manager
+# Sunshine Unified Launcher & Lifecycle Manager
 #
 # 功能特性：
-# 1. 桌面图标无缝点击体验（支持通知中心弹窗反馈 + 浏览器直达 Web 控制台）
-# 2. 校园网 100% 物理隐身：强制检查 Tailscale 活跃状态与内部 IPv4 绑定
-# 3. 固化 Intel VA-API 硬件级零拷贝编码器（彻底杜绝 Mesa Vulkan 段错误崩溃）
+# 1. 统一承载 systemd ExecStartPre、桌面图标 (.desktop) 与终端 `ujust sunshine` 入口
+# 2. 校园网 100% 物理隐身：强制检验 Tailscale 活跃状态并动态绑定内部 IPv4
+# 3. 默认初始化 VA-API 硬件级零拷贝编码器，同时保留用户在 Web UI 中的自定义编码器选择
 # 4. 动态同步 CSRF 受信来源（支持远程跨网段登录 Web 控制台）
-# 5. 支持标准桌面 Actions 扩展（打开控制台、重启服务、停止服务）
 # ==============================================================================
-set -u
+set -uo pipefail
 
 ICON="dev.lizardbyte.app.Sunshine"
 APP_TITLE="Sunshine 串流服务"
@@ -20,10 +19,8 @@ notify_desktop() {
     local title="$2"
     local message="$3"
 
-    # 若位于终端环境，向 stdout 打印清晰提示
     echo -e "[$title] $message"
 
-    # 若检测到图形会话与 notify-send 工具，向 GNOME 桌面发送系统通知
     if command -v notify-send >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-${DISPLAY:-}}" ]; then
         notify-send -u "$urgency" -i "$ICON" "$title" "$message" 2>/dev/null || true
     fi
@@ -35,17 +32,18 @@ if systemctl --user list-unit-files sunshine.service &>/dev/null; then
     svc="sunshine.service"
 fi
 
-conf_dir="$HOME/.config/sunshine"
+conf_dir="${XDG_CONFIG_HOME:-$HOME/.config}/sunshine"
 conf_file="${conf_dir}/sunshine.conf"
+ts_ip=""
 
 ensure_sunshine_config() {
     # 1. 严格检查 Tailscale 活跃连接（校园网隐身安全红线）
     if ! tailscale status &>/dev/null || tailscale status 2>/dev/null | grep -qi "stopped"; then
-        notify_desktop "critical" "$APP_TITLE" "⚠️ 未检测到 Tailscale 活跃连接！\n为确保校园网完全隐身，已阻止启动。请先连接 Tailscale。"
+        notify_desktop "critical" "$APP_TITLE" "⚠️ 未检测到 Tailscale 活跃连接！\n为确保校园网完全隐身，已阻止启动。请先运行 'tailscale up' 连接。"
         return 1
     fi
 
-    ts_ip=$(tailscale ip -4 2>/dev/null || true)
+    ts_ip=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
     if [ -z "$ts_ip" ]; then
         notify_desktop "critical" "$APP_TITLE" "⚠️ 未获取到有效 Tailscale IPv4 地址！\n请检查 Tailscale 登录与连接状态。"
         return 1
@@ -62,24 +60,22 @@ ensure_sunshine_config() {
         echo "bind_address = ${ts_ip}" >> "$conf_file"
     fi
 
-    # 固化使用稳定的 VA-API 硬件级编码（绕过上游 Mesa Vulkan 驱动段错误 Bug）
-    if grep -q "^[[:space:]]*encoder" "$conf_file"; then
-        sed -i "s|^[[:space:]]*encoder.*|encoder = vaapi|" "$conf_file"
-    else
+    # 仅在未配置编码器时默认写入稳定的 VA-API 硬件编码（尊重用户在 Web UI 中手动切换 nvenc 等选择）
+    if ! grep -q "^[[:space:]]*encoder" "$conf_file"; then
         echo "encoder = vaapi" >> "$conf_file"
     fi
 
     # 动态写入 CSRF 受信来源（解决跨网段访问 Web 控制台提交表单报 403 CSRF Protection Error）
-    origins="https://${ts_ip}:47990,https://localhost:47990"
+    local origins="https://${ts_ip}:47990,https://localhost:47990"
     if grep -q "^[[:space:]]*csrf_allowed_origins" "$conf_file"; then
         sed -i "s|^[[:space:]]*csrf_allowed_origins.*|csrf_allowed_origins = ${origins}|" "$conf_file"
     else
         echo "csrf_allowed_origins = ${origins}" >> "$conf_file"
     fi
 
-    # 4. 自动注入与更新应用模板（提供“正常亮屏”与“熄屏防窥”双模式选择）
-    apps_file="${conf_dir}/apps.json"
-    template_apps="/usr/share/sunshine/apps.json"
+    # 3. 自动注入与更新应用模板（提供“正常亮屏”与“熄屏防窥”双模式选择）
+    local apps_file="${conf_dir}/apps.json"
+    local template_apps="/usr/share/sunshine/apps.json"
     if [ ! -f "$apps_file" ]; then
         if [ -f "$template_apps" ]; then
             cp "$template_apps" "$apps_file"
@@ -102,9 +98,23 @@ open_web_ui() {
     fi
 }
 
+wait_service_active() {
+    for _ in {1..15}; do
+        if systemctl --user is-active --quiet "$svc"; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    return 1
+}
+
 action="${1:-start}"
 
 case "$action" in
+    "prestart")
+        # 供 systemd ExecStartPre 调用：校验 Tailscale 并刷新配置
+        ensure_sunshine_config
+        ;;
     "stop")
         systemctl --user stop "$svc"
         if [ -x /usr/libexec/my-bluefin/sunshine-privacy-screen ]; then
@@ -117,17 +127,22 @@ case "$action" in
             exit 1
         fi
         systemctl --user restart "$svc"
-        sleep 1.2
-        if systemctl --user is-active --quiet "$svc"; then
-            notify_desktop "normal" "$APP_TITLE" "🔄 服务已重启（已绑定 Tailscale: ${ts_ip}，编码器: vaapi）。\n正在打开 Web 控制台..."
+        if wait_service_active; then
+            notify_desktop "normal" "$APP_TITLE" "🔄 服务已重启（已绑定 Tailscale: ${ts_ip}）。\n🌐 控制台: https://${ts_ip}:47990"
             open_web_ui "$ts_ip"
         else
             notify_desktop "critical" "$APP_TITLE - 重启失败" "❌ 服务未能处于运行状态，请通过终端运行 'ujust sunshine logs' 查看日志。"
             exit 1
         fi
         ;;
-    "open-webui")
-        ts_ip=$(tailscale ip -4 2>/dev/null || true)
+    "status")
+        exec systemctl --user status "$svc"
+        ;;
+    "logs")
+        exec journalctl --user -u "$svc" -f
+        ;;
+    "open-webui"|"web"|"open")
+        ts_ip=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
         if [ -z "$ts_ip" ]; then
             notify_desktop "critical" "$APP_TITLE" "⚠️ 未检测到 Tailscale IP，无法打开远程控制台。"
             exit 1
@@ -135,35 +150,27 @@ case "$action" in
         notify_desktop "normal" "$APP_TITLE" "🌐 正在打开 Web 管理控制台 (https://${ts_ip}:47990)..."
         open_web_ui "$ts_ip"
         ;;
-    *)
-        # 默认：点击桌面图标启动或直接运行
+    "screen")
+        exec /usr/libexec/my-bluefin/sunshine-privacy-screen toggle
+        ;;
+    "start"|"toggle"|*)
         if systemctl --user is-active --quiet "$svc"; then
-            ts_ip=$(tailscale ip -4 2>/dev/null || true)
-            if [ -n "$ts_ip" ]; then
-                notify_desktop "normal" "$APP_TITLE" "🟢 服务正在运行中（校园网隐身模式已生效）。\n正在打开 Web 控制台..."
-                open_web_ui "$ts_ip"
+            ts_ip=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
+            if [ "$action" = "toggle" ]; then
+                echo "🟢 Sunshine 正在运行中（校园网完全隐身模式）"
+                [ -n "$ts_ip" ] && echo "🌐 控制台地址: https://${ts_ip}:47990"
+                echo "💡 提示: 若要停止服务，可运行 'ujust sunshine stop'"
             else
-                notify_desktop "normal" "$APP_TITLE" "🟢 服务正在运行中，正在打开 Web 控制台..."
-                open_web_ui "localhost"
+                notify_desktop "normal" "$APP_TITLE" "🟢 服务正在运行中（校园网隐身模式已生效）。\n正在打开 Web 控制台..."
+                open_web_ui "${ts_ip:-localhost}"
             fi
         else
             if ! ensure_sunshine_config; then
                 exit 1
             fi
             systemctl --user start "$svc"
-
-            # 轮询等待 systemd 服务激活确认
-            started=false
-            for _ in {1..15}; do
-                if systemctl --user is-active --quiet "$svc"; then
-                    started=true
-                    break
-                fi
-                sleep 0.2
-            done
-
-            if [ "$started" = true ]; then
-                notify_desktop "normal" "$APP_TITLE" "✅ 服务启动成功！\n已绑定 Tailscale (${ts_ip})，校园网隐身生效。\n正在进入 Web 管理控制台..."
+            if wait_service_active; then
+                notify_desktop "normal" "$APP_TITLE" "✅ 服务启动成功！\n已绑定 Tailscale (${ts_ip})，校园网隐身生效。\n🌐 Web 控制台: https://${ts_ip}:47990"
                 open_web_ui "$ts_ip"
             else
                 notify_desktop "critical" "$APP_TITLE - 启动失败" "❌ Sunshine 服务未能就绪，请在终端运行 'ujust sunshine logs' 排查详情。"

@@ -122,8 +122,15 @@ done
 
 BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
 
-# 异步在后台运行（配合 10-keep-background.conf 杜绝被 systemd 回收杀死）
-(
+# 通过 systemd-run 启动独立瞬态用户服务异步执行（符合 systemd CGroup 规范，零阻塞登录）
+if [ -z "${MY_BLUEFIN_BG_WORKER:-}" ] && command -v systemd-run >/dev/null 2>&1; then
+    if systemd-run --user --no-block --collect --unit=my-bluefin-brew-setup \
+        --setenv=MY_BLUEFIN_BG_WORKER=1 "$0" >/dev/null 2>&1; then
+        exit 0
+    fi
+fi
+
+run_brew_worker() {
     LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/simon-brew.lock"
     exec 200>"$LOCK_FILE"
     if ! flock -n 200; then
@@ -205,4 +212,10 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
         done
         touch "$LEGACY_FLAG"
     fi
-) &
+}
+
+if [ -n "${MY_BLUEFIN_BG_WORKER:-}" ]; then
+    run_brew_worker
+else
+    run_brew_worker &
+fi

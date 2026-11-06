@@ -77,8 +77,15 @@ if [ ${#pending_extensions[@]} -eq 0 ]; then
     exit 0
 fi
 
-# 6. 后台异步静默安装（使用独立子进程，完全不阻碍图形桌面就绪，静默无弹窗）
-(
+# 6. 通过 systemd-run 启动独立瞬态用户服务异步静默安装（符合 systemd CGroup 规范，完全不阻塞桌面登录）
+if [ -z "${MY_BLUEFIN_BG_WORKER:-}" ] && command -v systemd-run >/dev/null 2>&1; then
+    if systemd-run --user --no-block --collect --unit=my-bluefin-vscode-setup \
+        --setenv=MY_BLUEFIN_BG_WORKER=1 "$0" >/dev/null 2>&1; then
+        exit 0
+    fi
+fi
+
+run_vscode_worker() {
     # 等待桌面网络就绪
     sleep 5
 
@@ -122,4 +129,10 @@ fi
     done
 
     echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 扩展安装结束，成功: ${success_count}/${#pending_extensions[@]}" >> "${LOG_FILE}"
-) >/dev/null 2>&1 &
+}
+
+if [ -n "${MY_BLUEFIN_BG_WORKER:-}" ]; then
+    run_vscode_worker >/dev/null 2>&1
+else
+    run_vscode_worker >/dev/null 2>&1 &
+fi

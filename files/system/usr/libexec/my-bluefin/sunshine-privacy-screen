@@ -5,17 +5,32 @@
 # 功能特性：
 # 1. 物理背光断电级熄屏 (brightness=0 & bl_power=4)，不破坏 GPU 渲染与 KMS 抓屏
 # 2. 智能记忆与精准还原关屏前的原始亮度，断开或退出时无感复原
-# 3. 支持桌面端 / 串流内一键随时切换 (toggle)
+# 3. 零子进程开销 (Bash 内置 read) 背光守护，运行时锁存于 XDG_RUNTIME_DIR
+# 4. 支持桌面端 / 串流内一键随时切换 (toggle)
 # ==============================================================================
 set -u
 
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sunshine"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine"
 STATE_FILE="${STATE_DIR}/saved_brightness"
-INHIBIT_PID_FILE="${STATE_DIR}/inhibit.pid"
-GUARDIAN_PID_FILE="${STATE_DIR}/guardian.pid"
+INHIBIT_PID_FILE="${RUNTIME_DIR}/inhibit.pid"
+GUARDIAN_PID_FILE="${RUNTIME_DIR}/guardian.pid"
+
+stop_pid_file() {
+    local pid_file="$1"
+    if [ -f "$pid_file" ]; then
+        local pid=""
+        read -r pid < "$pid_file" 2>/dev/null || true
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+        fi
+        rm -f "$pid_file"
+    fi
+}
 
 start_idle_inhibitor() {
     stop_idle_inhibitor
+    mkdir -p "$RUNTIME_DIR"
     if command -v systemd-inhibit >/dev/null 2>&1; then
         systemd-inhibit --what=idle:sleep --who="Sunshine" --why="Streaming in privacy mode" --mode=block sleep infinity >/dev/null 2>&1 &
         echo $! > "$INHIBIT_PID_FILE"
@@ -23,27 +38,23 @@ start_idle_inhibitor() {
 }
 
 stop_idle_inhibitor() {
-    if [ -f "$INHIBIT_PID_FILE" ]; then
-        local pid
-        pid=$(cat "$INHIBIT_PID_FILE" 2>/dev/null || true)
-        if [ -n "$pid" ]; then
-            kill "$pid" 2>/dev/null || true
-        fi
-        rm -f "$INHIBIT_PID_FILE"
-    fi
+    stop_pid_file "$INHIBIT_PID_FILE"
 }
 
 start_brightness_guardian() {
     stop_brightness_guardian
-    # 启动后台守护死循环（每 200ms 强制锁定背光与供电为 0，彻底封死 Fn+亮度加/减 与 电源插拔唤醒）
+    mkdir -p "$RUNTIME_DIR"
+    # 启动后台守护循环（使用 Bash 内置 read 零 fork 开销，每 200ms 锁定背光与供电为关断状态）
     (
         while true; do
-            cur_b=$(cat "${BACKLIGHT_DIR}/brightness" 2>/dev/null || echo 0)
-            cur_p=$(cat "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || echo 0)
-            if [ "$cur_b" -ne 0 ]; then
+            cur_b=0
+            cur_p=0
+            read -r cur_b < "${BACKLIGHT_DIR}/brightness" 2>/dev/null || cur_b=0
+            read -r cur_p < "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || cur_p=0
+            if [ "${cur_b:-0}" -ne 0 ]; then
                 echo 0 > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
             fi
-            if [ "$cur_p" -ne 4 ]; then
+            if [ "${cur_p:-0}" -ne 4 ]; then
                 echo 4 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
             fi
             sleep 0.2
@@ -53,15 +64,21 @@ start_brightness_guardian() {
 }
 
 stop_brightness_guardian() {
-    if [ -f "$GUARDIAN_PID_FILE" ]; then
-        local pid
-        pid=$(cat "$GUARDIAN_PID_FILE" 2>/dev/null || true)
-        if [ -n "$pid" ]; then
-            kill "$pid" 2>/dev/null || true
-        fi
-        rm -f "$GUARDIAN_PID_FILE"
+    stop_pid_file "$GUARDIAN_PID_FILE"
+}
+
+notify_screen() {
+    local title="$1"
+    local message="$2"
+    if [ -t 1 ]; then
+        echo "[$title] $message"
+    fi
+    if command -v notify-send >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-${DISPLAY:-}}" ]; then
+        notify-send -u normal -i display-symbolic "$title" "$message" 2>/dev/null || true
     fi
 }
+
+action="${1:-toggle}"
 
 # 动态探测活跃的背光控制设备
 BACKLIGHT_DIR=""
@@ -77,38 +94,38 @@ else
 fi
 
 if [ -z "$BACKLIGHT_DIR" ] || [ ! -d "$BACKLIGHT_DIR" ]; then
-    echo "⚠️ 未在系统上找到可用的背光控制设备 (/sys/class/backlight)" >&2
-    exit 1
+    stop_brightness_guardian
+    stop_idle_inhibitor
+    rm -f "$STATE_FILE"
+    if [ "$action" != "on" ] && [ "$action" != "restore" ]; then
+        echo "⚠️ 未在系统上找到可用的背光控制设备 (/sys/class/backlight)" >&2
+        notify_screen "Sunshine 防窥错误" "未在系统上找到可用的背光控制设备 (/sys/class/backlight)"
+        exit 1
+    fi
+    exit 0
 fi
 
 get_max_brightness() {
-    cat "${BACKLIGHT_DIR}/max_brightness" 2>/dev/null || echo 800
+    local val=800
+    read -r val < "${BACKLIGHT_DIR}/max_brightness" 2>/dev/null || val=800
+    echo "${val:-800}"
 }
 
 get_current_brightness() {
-    cat "${BACKLIGHT_DIR}/brightness" 2>/dev/null || echo 0
+    local val=0
+    read -r val < "${BACKLIGHT_DIR}/brightness" 2>/dev/null || val=0
+    echo "${val:-0}"
 }
 
 get_bl_power() {
-    cat "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || echo 0
-}
-
-notify_screen() {
-    local title="$1"
-    local message="$2"
-    if [ -t 1 ]; then
-        echo "[$title] $message"
-    fi
-    if command -v notify-send >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-${DISPLAY:-}}" ]; then
-        notify-send -u normal -i display-symbolic "$title" "$message" 2>/dev/null || true
-    fi
+    local val=0
+    read -r val < "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || val=0
+    echo "${val:-0}"
 }
 
 turn_off_screen() {
     local cur_b
     cur_b=$(get_current_brightness)
-    local max_b
-    max_b=$(get_max_brightness)
 
     if [ ! -w "${BACKLIGHT_DIR}/brightness" ]; then
         notify_screen "Sunshine 防窥错误" "背光节点缺少写权限，请确认 udev 规则已生效"
@@ -116,7 +133,7 @@ turn_off_screen() {
         return 1
     fi
 
-    # 仅在当前亮度大于 0 时记录，避免记录到 0
+    # 仅在当前亮度大于 0 时记录，避免重复熄屏覆盖掉真实初始亮度
     mkdir -p "$STATE_DIR"
     if [ "$cur_b" -gt 0 ]; then
         echo "$cur_b" > "$STATE_FILE"
@@ -125,19 +142,29 @@ turn_off_screen() {
     echo 4 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo 0 > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
-    # 1. 抑制 GNOME 自动熄屏与系统休眠，保障手机串流满血不掉线
+    # 1. 抑制 GNOME 自动熄屏与系统休眠，保障串流满血不掉线
     start_idle_inhibitor
 
-    # 2. 启动背光死锁守护进程（防 Fn+亮度加/减 物理按键与插拔电源点亮屏幕）
+    # 2. 启动背光守护进程（防 Fn+亮度加/减 物理按键与插拔电源点亮屏幕）
     start_brightness_guardian
 
     notify_screen "Sunshine 防窥模式" "电脑物理屏幕已熄灭（完全黑屏防窥生效）"
 }
 
 turn_on_screen() {
-    local max_b
-    max_b=$(get_max_brightness)
-    local target_b=0
+    # 先终止背光死锁守护与空闲抑制锁，避免恢复亮度时与守护循环竞争
+    stop_brightness_guardian
+    stop_idle_inhibitor
+
+    local cur_b cur_p
+    cur_b=$(get_current_brightness)
+    cur_p=$(get_bl_power)
+
+    # 若当前屏幕已处于点亮状态（供电正常且亮度>0）且无活跃守护锁，做幂等清理后静默返回（供 ExecStopPost 安全调用）
+    if [ "$cur_b" -gt 0 ] && [ "$cur_p" -eq 0 ] && [ ! -f "$GUARDIAN_PID_FILE" ] && [ ! -f "$INHIBIT_PID_FILE" ]; then
+        rm -f "$STATE_FILE"
+        return 0
+    fi
 
     if [ ! -w "${BACKLIGHT_DIR}/brightness" ]; then
         notify_screen "Sunshine 防窥错误" "背光节点缺少写权限，请确认 udev 规则已生效"
@@ -145,29 +172,29 @@ turn_on_screen() {
         return 1
     fi
 
-    # 优先恢复此前记录的实际亮度
+    local max_b target_b=0
+    max_b=$(get_max_brightness)
+
+    # 优先恢复进入防窥前记录的实际亮度，并在恢复后清理状态文件
     if [ -f "$STATE_FILE" ]; then
-        target_b=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
+        read -r target_b < "$STATE_FILE" 2>/dev/null || target_b=0
+        rm -f "$STATE_FILE"
     fi
 
-    # 若未记录或数值无效，默认恢复为 50% 亮度
+    # 若未记录或数值无效，默认恢复为当前亮度（若 >0）或 50% 最大亮度
     if [ -z "$target_b" ] || [ "$target_b" -le 0 ]; then
-        target_b=$(( max_b / 2 ))
+        if [ "$cur_b" -gt 0 ]; then
+            target_b="$cur_b"
+        else
+            target_b=$(( max_b / 2 ))
+        fi
     fi
 
     echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo "$target_b" > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
-    # 1. 释放 GNOME 抑制锁，恢复系统正常节能策略
-    stop_idle_inhibitor
-
-    # 2. 终止背光死锁守护进程
-    stop_brightness_guardian
-
     notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度"
 }
-
-action="${1:-toggle}"
 
 case "$action" in
     "off"|"black")
