@@ -4,17 +4,33 @@
 #
 # 功能特性：
 # 1. 物理背光断电级熄屏 (brightness=0 & bl_power=4)，不破坏 GPU 渲染与 KMS 抓屏
-# 2. 智能记忆与精准还原关屏前的原始亮度，断开或退出时无感复原
-# 3. 零子进程开销 (Bash 内置 read) 背光守护，运行时锁存于 XDG_RUNTIME_DIR
-# 4. 支持桌面端 / 串流内一键随时切换 (toggle)
+# 2. 串流防窥期间自动屏蔽 GNOME 亮度快捷键 (Fn+亮度加/减) 与内核 ACPI 亮度切换，杜绝闪屏
+# 3. 智能记忆与精准还原关屏前的原始亮度、快捷键与节能策略，断开或退出时无感复原
+# 4. 零子进程开销 (Bash 内置 read) 背光守护，运行时锁存于 XDG_RUNTIME_DIR
 # ==============================================================================
 set -u
+
+# 确保在 systemd ExecStopPost 或 Sunshine 子进程中调用时能正常连接用户 D-Bus (供 gsettings 与 notify-send 使用)
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "/run/user/$(id -u)/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+fi
 
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sunshine"
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine"
 STATE_FILE="${STATE_DIR}/saved_brightness"
+AMBIENT_STATE_FILE="${STATE_DIR}/saved_ambient_enabled"
 INHIBIT_PID_FILE="${RUNTIME_DIR}/inhibit.pid"
 GUARDIAN_PID_FILE="${RUNTIME_DIR}/guardian.pid"
+KEYS_LOCK_FILE="${RUNTIME_DIR}/keys.locked"
+
+BRIGHTNESS_KEYS=(
+    "screen-brightness-up"
+    "screen-brightness-down"
+    "screen-brightness-up-monitor"
+    "screen-brightness-down-monitor"
+    "screen-brightness-cycle"
+    "screen-brightness-cycle-monitor"
+)
 
 stop_pid_file() {
     local pid_file="$1"
@@ -26,6 +42,55 @@ stop_pid_file() {
         fi
         rm -f "$pid_file"
     fi
+}
+
+lock_brightness_keys() {
+    mkdir -p "$RUNTIME_DIR" "$STATE_DIR"
+    # 1. 临时屏蔽 GNOME Shell 屏幕亮度调节快捷键（彻底拦截 Fn+亮度加/减 触发亮屏闪烁）
+    if command -v gsettings >/dev/null 2>&1; then
+        for key in "${BRIGHTNESS_KEYS[@]}"; do
+            gsettings set org.gnome.shell.keybindings "$key" "[]" 2>/dev/null || true
+        done
+        # 记忆用户原有的环境光自适应配置并临时关闭（idle-dim 已由 systemd-inhibit 阻断，无需改动）
+        if [ ! -f "$AMBIENT_STATE_FILE" ]; then
+            local orig_ambient=""
+            orig_ambient=$(gsettings get org.gnome.settings-daemon.plugins.power ambient-enabled 2>/dev/null || true)
+            if [ "$orig_ambient" = "true" ] || [ "$orig_ambient" = "false" ]; then
+                echo "$orig_ambient" > "$AMBIENT_STATE_FILE"
+            fi
+        fi
+        gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled false 2>/dev/null || true
+    fi
+
+    # 2. 若内核 ACPI video 驱动暴露了硬件按键开关，同步关闭内核态亮度直调
+    if [ -w "/sys/module/video/parameters/brightness_switch_enabled" ]; then
+        echo N > /sys/module/video/parameters/brightness_switch_enabled 2>/dev/null || true
+    fi
+
+    touch "$KEYS_LOCK_FILE"
+}
+
+unlock_brightness_keys() {
+    if command -v gsettings >/dev/null 2>&1; then
+        for key in "${BRIGHTNESS_KEYS[@]}"; do
+            gsettings reset org.gnome.shell.keybindings "$key" 2>/dev/null || true
+        done
+        # 精准还原用户原有的环境光自适应偏好，绝不覆盖用户个性化设置
+        if [ -f "$AMBIENT_STATE_FILE" ]; then
+            local saved_ambient=""
+            read -r saved_ambient < "$AMBIENT_STATE_FILE" 2>/dev/null || true
+            if [ "$saved_ambient" = "true" ] || [ "$saved_ambient" = "false" ]; then
+                gsettings set org.gnome.settings-daemon.plugins.power ambient-enabled "$saved_ambient" 2>/dev/null || true
+            fi
+            rm -f "$AMBIENT_STATE_FILE"
+        fi
+    fi
+
+    if [ -w "/sys/module/video/parameters/brightness_switch_enabled" ]; then
+        echo Y > /sys/module/video/parameters/brightness_switch_enabled 2>/dev/null || true
+    fi
+
+    rm -f "$KEYS_LOCK_FILE"
 }
 
 start_idle_inhibitor() {
@@ -44,7 +109,7 @@ stop_idle_inhibitor() {
 start_brightness_guardian() {
     stop_brightness_guardian
     mkdir -p "$RUNTIME_DIR"
-    # 启动后台守护循环（使用 Bash 内置 read 零 fork 开销，每 200ms 锁定背光与供电为关断状态）
+    # 启动后台守护循环（使用 Bash 内置 read 零 fork 开销，每 200ms 兜底锁定背光与供电为关断状态）
     (
         while true; do
             cur_b=0
@@ -96,6 +161,7 @@ fi
 if [ -z "$BACKLIGHT_DIR" ] || [ ! -d "$BACKLIGHT_DIR" ]; then
     stop_brightness_guardian
     stop_idle_inhibitor
+    [ -f "$KEYS_LOCK_FILE" ] && unlock_brightness_keys
     rm -f "$STATE_FILE"
     if [ "$action" != "on" ] && [ "$action" != "restore" ]; then
         echo "⚠️ 未在系统上找到可用的背光控制设备 (/sys/class/backlight)" >&2
@@ -139,31 +205,47 @@ turn_off_screen() {
         echo "$cur_b" > "$STATE_FILE"
     fi
 
+    # 1. 屏蔽 GNOME 亮度调节组合键 (Fn+亮度加/减) 与自动调光，从源头杜绝按键闪屏
+    lock_brightness_keys
+
+    # 2. 切断物理背光与亮度
     echo 4 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo 0 > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
-    # 1. 抑制 GNOME 自动熄屏与系统休眠，保障串流满血不掉线
+    # 3. 抑制 GNOME 自动熄屏与系统休眠，保障串流满血不掉线
     start_idle_inhibitor
 
-    # 2. 启动背光守护进程（防 Fn+亮度加/减 物理按键与插拔电源点亮屏幕）
+    # 4. 启动背光兜底守护进程（防御插拔电源等底层事件点亮屏幕）
     start_brightness_guardian
 
-    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已熄灭（完全黑屏防窥生效）"
+    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已熄灭（已屏蔽亮度快捷键，黑屏防窥生效）"
 }
 
 turn_on_screen() {
-    # 先终止背光死锁守护与空闲抑制锁，避免恢复亮度时与守护循环竞争
-    stop_brightness_guardian
-    stop_idle_inhibitor
-
-    local cur_b cur_p
+    local cur_b cur_p had_lock=false
     cur_b=$(get_current_brightness)
     cur_p=$(get_bl_power)
 
-    # 若当前屏幕已处于点亮状态（供电正常且亮度>0）且无活跃守护锁，做幂等清理后静默返回（供 ExecStopPost 安全调用）
-    if [ "$cur_b" -gt 0 ] && [ "$cur_p" -eq 0 ] && [ ! -f "$GUARDIAN_PID_FILE" ] && [ ! -f "$INHIBIT_PID_FILE" ]; then
+    if [ -f "$GUARDIAN_PID_FILE" ] || [ -f "$INHIBIT_PID_FILE" ] || [ -f "$KEYS_LOCK_FILE" ]; then
+        had_lock=true
+    fi
+
+    # 先终止背光守护、释放空闲抑制锁并恢复亮度快捷键
+    stop_brightness_guardian
+    stop_idle_inhibitor
+    if [ "$had_lock" = true ]; then
+        unlock_brightness_keys
+    fi
+
+    # 若当前屏幕已处于点亮状态（供电正常且亮度>0）且此前无防窥锁，做幂等清理后静默返回（供 ExecStopPost 安全调用）
+    if [ "$cur_b" -gt 0 ] && [ "$cur_p" -eq 0 ] && [ "$had_lock" = false ]; then
         rm -f "$STATE_FILE"
         return 0
+    fi
+
+    # 确保即使在异常重启丢失 keys.locked 的黑屏急救场景下，也强制重置还原一次亮度快捷键
+    if [ "$had_lock" = false ]; then
+        unlock_brightness_keys
     fi
 
     if [ ! -w "${BACKLIGHT_DIR}/brightness" ]; then
@@ -193,7 +275,7 @@ turn_on_screen() {
     echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo "$target_b" > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
-    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度"
+    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度与快捷键"
 }
 
 case "$action" in
