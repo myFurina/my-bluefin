@@ -52,7 +52,7 @@ sunshine ACTION="toggle":
         svc="sunshine.service"
     fi
 
-    ensure_tailscale_bind() {
+    ensure_sunshine_config() {
         ts_ip=$(tailscale ip -4 2>/dev/null || true)
         if [ -z "$ts_ip" ]; then
             echo "⚠️ 未检测到有效 Tailscale IP，为确保校园网完全隐身，已阻止启动。"
@@ -61,10 +61,19 @@ sunshine ACTION="toggle":
         fi
         mkdir -p "$conf_dir"
         [ ! -f "$conf_file" ] && touch "$conf_file"
+
+        # 1. 动态绑定 Tailscale IP，物理校园网完全隐身
         if grep -q "^[[:space:]]*bind_address" "$conf_file"; then
             sed -i "s|^[[:space:]]*bind_address.*|bind_address = ${ts_ip}|" "$conf_file"
         else
             echo "bind_address = ${ts_ip}" >> "$conf_file"
+        fi
+
+        # 2. 固化使用成熟的 Intel 硬件级 VA-API 编码器（彻底杜绝 Mesa Vulkan 上游段错误 Bug）
+        if grep -q "^[[:space:]]*encoder" "$conf_file"; then
+            sed -i "s|^[[:space:]]*encoder.*|encoder = vaapi|" "$conf_file"
+        else
+            echo "encoder = vaapi" >> "$conf_file"
         fi
         return 0
     }
@@ -75,11 +84,11 @@ sunshine ACTION="toggle":
             echo "🛑 Sunshine 串流服务已停止"
             ;;
         "restart")
-            if ! ensure_tailscale_bind; then
+            if ! ensure_sunshine_config; then
                 exit 1
             fi
             systemctl --user restart "$svc"
-            echo "🔄 Sunshine 串流服务已重启（已绑定至 Tailscale: ${ts_ip}）"
+            echo "🔄 Sunshine 串流服务已重启（已绑定至 Tailscale: ${ts_ip}，编码器: vaapi）"
             echo "🌐 控制台地址: https://${ts_ip}:47990"
             ;;
         "status")
@@ -97,10 +106,10 @@ sunshine ACTION="toggle":
                 fi
                 echo "💡 提示: 若要停止服务，可运行 'ujust sunshine stop'"
             else
-                if ! ensure_tailscale_bind; then
+                if ! ensure_sunshine_config; then
                     exit 1
                 fi
-                echo "🚀 正在启动 Sunshine 串流服务（绑定至 Tailscale: ${ts_ip}，校园网完全隐身）..."
+                echo "🚀 正在启动 Sunshine 串流服务（绑定至 Tailscale: ${ts_ip}，编码器: vaapi，校园网完全隐身）..."
                 systemctl --user start "$svc"
                 sleep 1
                 if systemctl --user is-active --quiet "$svc"; then
