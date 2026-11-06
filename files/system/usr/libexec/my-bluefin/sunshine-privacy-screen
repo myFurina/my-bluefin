@@ -11,6 +11,26 @@ set -u
 
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sunshine"
 STATE_FILE="${STATE_DIR}/saved_brightness"
+INHIBIT_PID_FILE="${STATE_DIR}/inhibit.pid"
+
+start_idle_inhibitor() {
+    stop_idle_inhibitor
+    if command -v systemd-inhibit >/dev/null 2>&1; then
+        systemd-inhibit --what=idle:sleep --who="Sunshine" --why="Streaming in privacy mode" --mode=block sleep infinity >/dev/null 2>&1 &
+        echo $! > "$INHIBIT_PID_FILE"
+    fi
+}
+
+stop_idle_inhibitor() {
+    if [ -f "$INHIBIT_PID_FILE" ]; then
+        local pid
+        pid=$(cat "$INHIBIT_PID_FILE" 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+        rm -f "$INHIBIT_PID_FILE"
+    fi
+}
 
 # 动态探测活跃的背光控制设备
 BACKLIGHT_DIR=""
@@ -74,6 +94,9 @@ turn_off_screen() {
     echo 4 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo 0 > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
+    # 抑制 GNOME 自动熄屏与系统休眠，保障手机串流满血不掉线
+    start_idle_inhibitor
+
     notify_screen "Sunshine 防窥模式" "电脑物理屏幕已熄灭（完全黑屏防窥生效）"
 }
 
@@ -100,6 +123,9 @@ turn_on_screen() {
 
     echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo "$target_b" > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
+
+    # 释放 GNOME 抑制锁，恢复系统正常节能策略
+    stop_idle_inhibitor
 
     notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度"
 }
