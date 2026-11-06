@@ -47,6 +47,10 @@ sunshine ACTION="toggle":
     #!/usr/bin/env bash
     conf_dir="$HOME/.config/sunshine"
     conf_file="${conf_dir}/sunshine.conf"
+    svc="app-dev.lizardbyte.app.Sunshine.service"
+    if systemctl --user list-unit-files sunshine.service &>/dev/null; then
+        svc="sunshine.service"
+    fi
 
     ensure_tailscale_bind() {
         ts_ip=$(tailscale ip -4 2>/dev/null || true)
@@ -67,25 +71,25 @@ sunshine ACTION="toggle":
 
     case "{{ACTION}}" in
         "stop")
-            systemctl --user stop sunshine
+            systemctl --user stop "$svc"
             echo "🛑 Sunshine 串流服务已停止"
             ;;
         "restart")
             if ! ensure_tailscale_bind; then
                 exit 1
             fi
-            systemctl --user restart sunshine
+            systemctl --user restart "$svc"
             echo "🔄 Sunshine 串流服务已重启（已绑定至 Tailscale: ${ts_ip}）"
             echo "🌐 控制台地址: https://${ts_ip}:47990"
             ;;
         "status")
-            systemctl --user status sunshine
+            systemctl --user status "$svc"
             ;;
         "logs")
-            journalctl --user -u sunshine -f
+            journalctl --user -u "$svc" -f
             ;;
         *)
-            if systemctl --user is-active --quiet sunshine; then
+            if systemctl --user is-active --quiet "$svc"; then
                 ts_ip=$(tailscale ip -4 2>/dev/null || true)
                 echo "🟢 Sunshine 正在运行中（校园网完全隐身模式）"
                 if [ -n "$ts_ip" ]; then
@@ -97,9 +101,9 @@ sunshine ACTION="toggle":
                     exit 1
                 fi
                 echo "🚀 正在启动 Sunshine 串流服务（绑定至 Tailscale: ${ts_ip}，校园网完全隐身）..."
-                systemctl --user start sunshine
+                systemctl --user start "$svc"
                 sleep 1
-                if systemctl --user is-active --quiet sunshine; then
+                if systemctl --user is-active --quiet "$svc"; then
                     echo "✅ Sunshine 启动成功！"
                     echo "🌐 Web 管理控制台: https://${ts_ip}:47990"
                     echo "🔒 隐私安全状态: 物理校园网零暴露，仅限 Tailscale 设备可连接"
