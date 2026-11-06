@@ -47,12 +47,14 @@ elif [ -f "$HOME/.local/bin/opencode" ] && [ -f /usr/share/ublue-os/my-brew/open
     chmod 755 "$HOME/.local/bin/opencode"
 fi
 
-# 3. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量及首次就绪检测
+# 3. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量（含 Git 镜像）及首次就绪检测
 if ! grep -q "linuxbrew" "$HOME/.bashrc" 2>/dev/null; then
     cat << 'BREWENV' >> "$HOME/.bashrc"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null)"
 export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
 export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git"
+export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git"
 export HOMEBREW_NO_AUTO_UPDATE=1
 
 # 首次登录未安装完成时的轻量终端进度指引（仅在就绪前提示一次）
@@ -60,6 +62,11 @@ if [ ! -f "$HOME/.local/state/brew-provisioned.list" ] && [ ! -f "$HOME/.config/
     echo "💡 提示: 后台正在自动安装 Homebrew 开发工具链 (可查看日志: tail -f ~/.local/state/brew-setup.log)"
 fi
 BREWENV
+elif ! grep -q "HOMEBREW_BREW_GIT_REMOTE" "$HOME/.bashrc" 2>/dev/null; then
+    cat << 'BREW_GIT_ENV' >> "$HOME/.bashrc"
+export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git"
+export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git"
+BREW_GIT_ENV
 fi
 
 # 5. 增量差分检测：仅对未推介过的新配方执行安装，用户主动卸载的工具绝不重新下载
@@ -126,7 +133,29 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
     eval "$("${BREW_BIN}" shellenv)"
     export HOMEBREW_API_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles/api"
     export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
+    export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git"
+    export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git"
     export HOMEBREW_NO_AUTO_UPDATE=1
+
+    # 自动校准 Homebrew 自身 Git 仓库至清华镜像源（彻底消除 brew update 卡在 GitHub 问题）
+    brew_repo="$("${BREW_BIN}" --repo 2>/dev/null || echo "/home/linuxbrew/.linuxbrew/Homebrew")"
+    if [ -d "${brew_repo}/.git" ]; then
+        current_brew_remote=$(git -C "${brew_repo}" remote get-url origin 2>/dev/null || true)
+        if [[ "${current_brew_remote}" =~ github\.com/Homebrew/brew ]]; then
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 自动切换 Homebrew 核心程序至清华镜像源..."
+            git -C "${brew_repo}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git" 2>/dev/null || true
+        fi
+    fi
+
+    # 兼容处理核心 homebrew-core tap（若存在）
+    core_tap="${brew_repo}/Library/Taps/homebrew/homebrew-core"
+    if [ -d "${core_tap}/.git" ]; then
+        current_core_remote=$(git -C "${core_tap}" remote get-url origin 2>/dev/null || true)
+        if [[ "${current_core_remote}" =~ github\.com/Homebrew/homebrew-core ]]; then
+            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 自动切换 homebrew-core tap 至清华镜像源..."
+            git -C "${core_tap}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git" 2>/dev/null || true
+        fi
+    fi
 
     echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 发现 ${#pending_formulas[@]} 个待推介工具: ${pending_formulas[*]}"
 
