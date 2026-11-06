@@ -69,6 +69,27 @@ export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebr
 BREW_GIT_ENV
 fi
 
+# 4. 自动校准 Homebrew 自身 Git 仓库至清华镜像（一次性操作，成功后立 flag 永久跳过）
+BREW_MIRROR_FLAG="$HOME/.local/state/.brew-git-mirror-done"
+if [ ! -f "$BREW_MIRROR_FLAG" ]; then
+    brew_repo="/home/linuxbrew/.linuxbrew/Homebrew"
+    if [ -d "${brew_repo}/.git" ]; then
+        current_brew_remote=$(git -C "${brew_repo}" remote get-url origin 2>/dev/null || true)
+        if [[ "${current_brew_remote}" =~ github\.com/Homebrew/brew ]]; then
+            git -C "${brew_repo}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git" 2>/dev/null || true
+        fi
+
+        core_tap="${brew_repo}/Library/Taps/homebrew/homebrew-core"
+        if [ -d "${core_tap}/.git" ]; then
+            current_core_remote=$(git -C "${core_tap}" remote get-url origin 2>/dev/null || true)
+            if [[ "${current_core_remote}" =~ github\.com/Homebrew/homebrew-core ]]; then
+                git -C "${core_tap}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git" 2>/dev/null || true
+            fi
+        fi
+        touch "$BREW_MIRROR_FLAG"
+    fi
+fi
+
 # 5. 增量差分检测：仅对未推介过的新配方执行安装，用户主动卸载的工具绝不重新下载
 BREWFILE="/usr/share/ublue-os/my-brew/Brewfile"
 PROVISIONED_FILE="$HOME/.local/state/brew-provisioned.list"
@@ -137,24 +158,26 @@ BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
     export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git"
     export HOMEBREW_NO_AUTO_UPDATE=1
 
-    # 自动校准 Homebrew 自身 Git 仓库至清华镜像源（彻底消除 brew update 卡在 GitHub 问题）
-    brew_repo="$("${BREW_BIN}" --repo 2>/dev/null || echo "/home/linuxbrew/.linuxbrew/Homebrew")"
-    if [ -d "${brew_repo}/.git" ]; then
-        current_brew_remote=$(git -C "${brew_repo}" remote get-url origin 2>/dev/null || true)
-        if [[ "${current_brew_remote}" =~ github\.com/Homebrew/brew ]]; then
-            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 自动切换 Homebrew 核心程序至清华镜像源..."
-            git -C "${brew_repo}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git" 2>/dev/null || true
+    # 若此前尚未完成校准（如首登未解压完毕），在此完成兜底并立 flag 永久跳过
+    if [ ! -f "$BREW_MIRROR_FLAG" ]; then
+        brew_repo="$("${BREW_BIN}" --repo 2>/dev/null || echo "/home/linuxbrew/.linuxbrew/Homebrew")"
+        if [ -d "${brew_repo}/.git" ]; then
+            current_brew_remote=$(git -C "${brew_repo}" remote get-url origin 2>/dev/null || true)
+            if [[ "${current_brew_remote}" =~ github\.com/Homebrew/brew ]]; then
+                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 自动切换 Homebrew 核心程序至清华镜像源..."
+                git -C "${brew_repo}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git" 2>/dev/null || true
+            fi
         fi
-    fi
 
-    # 兼容处理核心 homebrew-core tap（若存在）
-    core_tap="${brew_repo}/Library/Taps/homebrew/homebrew-core"
-    if [ -d "${core_tap}/.git" ]; then
-        current_core_remote=$(git -C "${core_tap}" remote get-url origin 2>/dev/null || true)
-        if [[ "${current_core_remote}" =~ github\.com/Homebrew/homebrew-core ]]; then
-            echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 自动切换 homebrew-core tap 至清华镜像源..."
-            git -C "${core_tap}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git" 2>/dev/null || true
+        core_tap="${brew_repo}/Library/Taps/homebrew/homebrew-core"
+        if [ -d "${core_tap}/.git" ]; then
+            current_core_remote=$(git -C "${core_tap}" remote get-url origin 2>/dev/null || true)
+            if [[ "${current_core_remote}" =~ github\.com/Homebrew/homebrew-core ]]; then
+                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 自动切换 homebrew-core tap 至清华镜像源..."
+                git -C "${core_tap}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git" 2>/dev/null || true
+            fi
         fi
+        touch "$BREW_MIRROR_FLAG"
     fi
 
     echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 发现 ${#pending_formulas[@]} 个待推介工具: ${pending_formulas[*]}"
