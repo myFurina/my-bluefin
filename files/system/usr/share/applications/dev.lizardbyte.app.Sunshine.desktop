@@ -1,0 +1,33 @@
+[Desktop Entry]
+Actions=OpenWebUI;Restart;Stop;
+Categories=Network;RemoteAccess;
+Comment=Self-hosted game stream host for Moonlight (Tailscale Stealth Mode)
+Comment[zh_CN]=基于 Tailscale 隐身运行的 Moonlight 游戏串流服务端
+Exec=/usr/libexec/my-bluefin/sunshine-gui-launcher
+Icon=dev.lizardbyte.app.Sunshine
+Keywords=gamestream;stream;moonlight;remote play;sunshine;
+Keywords[zh_CN]=串流;游戏串流;远程串流;moonlight;sunshine;
+Name=Sunshine
+StartupNotify=true
+StartupWMClass=dev.lizardbyte.app.Sunshine
+Terminal=false
+Type=Application
+Version=1.0
+
+[Desktop Action OpenWebUI]
+Exec=/usr/libexec/my-bluefin/sunshine-gui-launcher open-webui
+Icon=web-browser
+Name=Open Web UI
+Name[zh_CN]=打开管理控制台
+
+[Desktop Action Restart]
+Exec=/usr/libexec/my-bluefin/sunshine-gui-launcher restart
+Icon=view-refresh
+Name=Restart Service
+Name[zh_CN]=重启串流服务
+
+[Desktop Action Stop]
+Exec=/usr/libexec/my-bluefin/sunshine-gui-launcher stop
+Icon=process-stop
+Name=Stop Service
+Name[zh_CN]=停止串流服务

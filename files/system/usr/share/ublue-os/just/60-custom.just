@@ -21,7 +21,7 @@ snapshot:
 [group('Snapshot')]
 snapshot-create NAME="":
     #!/usr/bin/env bash
-    /usr/libexec/my-bluefin/system-snapshot create "{{NAME}}"
+    /usr/libexec/my-bluefin/system-snapshot create "{{ NAME }}"
 
 # 查看所有系统快照历史 (List system snapshots)
 [group('Snapshot')]
@@ -33,13 +33,13 @@ snapshot-list:
 [group('Snapshot')]
 snapshot-restore ID="":
     #!/usr/bin/env bash
-    /usr/libexec/my-bluefin/system-snapshot restore "{{ID}}"
+    /usr/libexec/my-bluefin/system-snapshot restore "{{ ID }}"
 
 # 删除指定系统快照 (Delete a system snapshot)
 [group('Snapshot')]
 snapshot-delete ID="":
     #!/usr/bin/env bash
-    /usr/libexec/my-bluefin/system-snapshot delete "{{ID}}"
+    /usr/libexec/my-bluefin/system-snapshot delete "{{ ID }}"
 
 # Sunshine 游戏串流服务启停与管理 (Sunshine GameStream Management)
 [group('Streaming')]
@@ -92,7 +92,7 @@ sunshine ACTION="toggle":
         return 0
     }
 
-    case "{{ACTION}}" in
+    case "{{ ACTION }}" in
         "stop")
             systemctl --user stop "$svc"
             echo "🛑 Sunshine 串流服务已停止"
@@ -110,6 +110,15 @@ sunshine ACTION="toggle":
             ;;
         "logs")
             journalctl --user -u "$svc" -f
+            ;;
+        "web"|"open")
+            ts_ip=$(tailscale ip -4 2>/dev/null || true)
+            if [ -n "$ts_ip" ]; then
+                echo "🌐 正在打开 Web 管理控制台: https://${ts_ip}:47990"
+                xdg-open "https://${ts_ip}:47990" 2>/dev/null || true
+            else
+                echo "⚠️ 未获取到有效 Tailscale IP，无法打开控制台"
+            fi
             ;;
         *)
             if systemctl --user is-active --quiet "$svc"; then
