@@ -53,6 +53,12 @@ sunshine ACTION="toggle":
     fi
 
     ensure_sunshine_config() {
+        if ! tailscale status &>/dev/null || tailscale status 2>/dev/null | grep -qi "stopped"; then
+            echo "⚠️ Tailscale 当前未连接或已停止，为确保校园网完全隐身，已阻止启动。"
+            echo "💡 请先启动并连接 Tailscale（可运行 'tailscale up'）。"
+            return 1
+        fi
+
         ts_ip=$(tailscale ip -4 2>/dev/null || true)
         if [ -z "$ts_ip" ]; then
             echo "⚠️ 未检测到有效 Tailscale IP，为确保校园网完全隐身，已阻止启动。"
@@ -74,6 +80,14 @@ sunshine ACTION="toggle":
             sed -i "s|^[[:space:]]*encoder.*|encoder = vaapi|" "$conf_file"
         else
             echo "encoder = vaapi" >> "$conf_file"
+        fi
+
+        # 3. 动态配置 CSRF 受信来源，允许 Tailscale 远程访问管理控制台并提交敏感表单
+        origins="https://${ts_ip}:47990,https://localhost:47990"
+        if grep -q "^[[:space:]]*csrf_allowed_origins" "$conf_file"; then
+            sed -i "s|^[[:space:]]*csrf_allowed_origins.*|csrf_allowed_origins = ${origins}|" "$conf_file"
+        else
+            echo "csrf_allowed_origins = ${origins}" >> "$conf_file"
         fi
         return 0
     }
