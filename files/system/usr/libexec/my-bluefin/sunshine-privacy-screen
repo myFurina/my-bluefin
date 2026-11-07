@@ -140,14 +140,14 @@ restore_physical_audio() {
 }
 
 pause_all_media_players() {
-    # 通过 D-Bus MPRIS 接口自动暂停所有正在播放的音视频媒体（浏览器、wiliwili、本地播放器等）
+    # 通过 D-Bus MPRIS 接口同步暂停所有正在播放的音视频媒体（浏览器、wiliwili、本地播放器等），等待播放器确认暂停后再恢复声卡
     if command -v dbus-send >/dev/null 2>&1; then
         local dests
         dests=$(dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply \
             /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
             | grep -Eo 'org\.mpris\.MediaPlayer2\.[^"]+' || true)
         for d in $dests; do
-            dbus-send --session --dest="$d" --type=method_call \
+            dbus-send --session --dest="$d" --type=method_call --reply-timeout=500 --print-reply \
                 /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.Pause >/dev/null 2>&1 || true
         done
     fi
@@ -242,14 +242,22 @@ is_stream_active() {
 }
 
 lock_desktop_session() {
-    # 1. 优先向 GNOME ScreenSaver 发送同步 D-Bus 锁屏调用（跨 systemd user service 最可靠）
+    # 1. 优先向 GNOME ScreenSaver 发送同步 D-Bus 锁屏调用（跨 systemd user service 最可靠，且无需任何 Polkit 提权）
     if command -v dbus-send >/dev/null 2>&1; then
-        dbus-send --session --dest=org.gnome.ScreenSaver --type=method_call \
-            /org/gnome/ScreenSaver org.gnome.ScreenSaver.Lock 2>/dev/null || true
+        if dbus-send --session --dest=org.gnome.ScreenSaver --type=method_call --print-reply \
+            /org/gnome/ScreenSaver org.gnome.ScreenSaver.Lock >/dev/null 2>&1; then
+            return 0
+        fi
     fi
-    # 2. 兜底使用 systemd loginctl lock-sessions（避免 user service 无 XDG_SESSION_ID 报错）
+    # 2. 兜底：仅锁定当前用户自己的图形会话（使用单数 lock-session <sid>，严禁使用复数 lock-sessions 触发全局 Polkit 管理员密码弹窗）
     if command -v loginctl >/dev/null 2>&1; then
-        loginctl lock-sessions 2>/dev/null || true
+        local sid=""
+        sid=$(loginctl show-user "$UID" -p Display --value 2>/dev/null | awk '{print $1}' || true)
+        if [ -n "$sid" ]; then
+            loginctl lock-session "$sid" 2>/dev/null || true
+        else
+            loginctl lock-session 2>/dev/null || true
+        fi
     fi
 }
 
@@ -281,18 +289,19 @@ if [ -z "$BACKLIGHT_DIR" ] || [ ! -d "$BACKLIGHT_DIR" ]; then
     stop_brightness_guardian
     stop_idle_inhibitor
     [ -f "$KEYS_LOCK_FILE" ] && unlock_brightness_keys
-    rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE" "$AUDIO_STATE_FILE"
+    rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE"
     if [ "$action" != "on" ] && [ "$action" != "restore" ]; then
+        rm -f "$AUDIO_STATE_FILE"
         echo "⚠️ 未在系统上找到可用的背光控制设备 (/sys/class/backlight)" >&2
         notify_screen "Sunshine 防窥错误" "未在系统上找到可用的背光控制设备 (/sys/class/backlight)"
         exit 1
     fi
     if [ "$lock_mode" = "always" ]; then
         pause_all_media_players
-        mute_physical_audio
-        rm -f "$AUDIO_STATE_FILE"
         lock_desktop_session
+        sleep 0.2
     fi
+    restore_physical_audio
     exit 0
 fi
 
@@ -379,15 +388,15 @@ turn_on_screen() {
 
     # 若当前屏幕已处于点亮状态（供电正常且亮度>0）且此前无防窥锁：
     # - 默认 (auto, 如 ExecStopPost / stop / restart 调用) 直接静默返回，绝不误锁本地正在使用的桌面！
-    # - 仅当 apps.json undo 显式传入 --lock (always) 时，才在退出正常亮屏串流后暂停媒体、静音并执行锁屏。
+    # - 仅当 apps.json undo 显式传入 --lock (always) 时，才在退出正常亮屏串流后暂停媒体并执行锁屏。
     if [ "$cur_b" -gt 0 ] && [ "$cur_p" -eq 0 ] && [ "$had_lock" = false ]; then
-        rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE" "$AUDIO_STATE_FILE"
+        rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE"
         if [ "$lock_mode" = "always" ]; then
             pause_all_media_players
-            mute_physical_audio
-            rm -f "$AUDIO_STATE_FILE"
             lock_desktop_session
+            sleep 0.2
         fi
+        restore_physical_audio
         return 0
     fi
 
@@ -420,17 +429,13 @@ turn_on_screen() {
         fi
     fi
 
-    # 先暂停媒体播放、确保物理喇叭静音并拉下 GNOME 锁屏帷幕（等待 200ms 渲染就绪），再通电点亮物理背光
+    # 先在静音状态下暂停所有媒体播放、拉下 GNOME 锁屏帷幕（等待 200ms 待锁屏渲染就绪且音频缓冲排空），再自动恢复串流前的物理声卡状态并通电点亮屏幕
     if [ "$lock_mode" = "auto" ] || [ "$lock_mode" = "always" ]; then
         pause_all_media_players
-        mute_physical_audio
-        rm -f "$AUDIO_STATE_FILE"
         lock_desktop_session
         sleep 0.2
-    else
-        # 串流途中手动 toggle 切回正常亮屏：还原进入防窥前的物理声卡静音状态
-        restore_physical_audio
     fi
+    restore_physical_audio
 
     echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo "$target_b" > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
