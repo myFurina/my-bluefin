@@ -10,15 +10,22 @@
 # ==============================================================================
 set -u
 
-# 确保在 systemd ExecStopPost 或 Sunshine 子进程中调用时能正常连接用户 D-Bus (供 gsettings 与 notify-send 使用)
-if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "/run/user/$(id -u)/bus" ]; then
-    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+# 确保在 systemd ExecStopPost 或 Sunshine 子进程中调用时能正常连接用户运行时目录与 D-Bus / PulseAudio (供 pactl、gsettings 与 notify-send 使用)
+if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+fi
+if [ -z "${PULSE_SERVER:-}" ] && [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native" ]; then
+    export PULSE_SERVER="unix:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native"
 fi
 
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sunshine"
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine"
 STATE_FILE="${STATE_DIR}/saved_brightness"
 AMBIENT_STATE_FILE="${STATE_DIR}/saved_ambient_enabled"
+AUDIO_STATE_FILE="${STATE_DIR}/saved_audio_mute"
 INHIBIT_PID_FILE="${RUNTIME_DIR}/inhibit.pid"
 GUARDIAN_PID_FILE="${RUNTIME_DIR}/guardian.pid"
 KEYS_LOCK_FILE="${RUNTIME_DIR}/keys.locked"
@@ -91,6 +98,59 @@ unlock_brightness_keys() {
     fi
 
     rm -f "$KEYS_LOCK_FILE"
+}
+
+mute_physical_audio() {
+    mkdir -p "$STATE_DIR"
+    if command -v pactl >/dev/null 2>&1; then
+        local sinks
+        # 仅筛选物理扬声器/耳机通道，绝不静音 Sunshine 虚拟串流声卡 (sink-sunshine-stereo / surround)
+        # 强制 LC_ALL=C 避免中文等本地化输出导致解析失败
+        sinks=$(LC_ALL=C pactl list short sinks 2>/dev/null | awk 'tolower($2) !~ /sunshine/ {print $2}' || true)
+        if [ -n "$sinks" ]; then
+            if [ ! -f "$AUDIO_STATE_FILE" ]; then
+                : > "$AUDIO_STATE_FILE"
+                for s in $sinks; do
+                    local m=""
+                    m=$(LC_ALL=C pactl get-sink-mute "$s" 2>/dev/null | awk '{print $2}' || true)
+                    if [ "$m" = "yes" ] || [ "$m" = "no" ]; then
+                        echo "${s} ${m}" >> "$AUDIO_STATE_FILE"
+                    fi
+                done
+            fi
+            for s in $sinks; do
+                pactl set-sink-mute "$s" 1 2>/dev/null || true
+            done
+        fi
+    fi
+}
+
+restore_physical_audio() {
+    if [ -f "$AUDIO_STATE_FILE" ] && command -v pactl >/dev/null 2>&1; then
+        while read -r s m; do
+            [ -n "${s:-}" ] || continue
+            if [ "${m:-}" = "no" ]; then
+                pactl set-sink-mute "$s" 0 2>/dev/null || true
+            elif [ "${m:-}" = "yes" ]; then
+                pactl set-sink-mute "$s" 1 2>/dev/null || true
+            fi
+        done < "$AUDIO_STATE_FILE"
+    fi
+    rm -f "$AUDIO_STATE_FILE"
+}
+
+pause_all_media_players() {
+    # 通过 D-Bus MPRIS 接口自动暂停所有正在播放的音视频媒体（浏览器、wiliwili、本地播放器等）
+    if command -v dbus-send >/dev/null 2>&1; then
+        local dests
+        dests=$(dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply \
+            /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
+            | grep -Eo 'org\.mpris\.MediaPlayer2\.[^"]+' || true)
+        for d in $dests; do
+            dbus-send --session --dest="$d" --type=method_call \
+                /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.Pause >/dev/null 2>&1 || true
+        done
+    fi
 }
 
 start_idle_inhibitor() {
@@ -221,13 +281,16 @@ if [ -z "$BACKLIGHT_DIR" ] || [ ! -d "$BACKLIGHT_DIR" ]; then
     stop_brightness_guardian
     stop_idle_inhibitor
     [ -f "$KEYS_LOCK_FILE" ] && unlock_brightness_keys
-    rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE"
+    rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE" "$AUDIO_STATE_FILE"
     if [ "$action" != "on" ] && [ "$action" != "restore" ]; then
         echo "⚠️ 未在系统上找到可用的背光控制设备 (/sys/class/backlight)" >&2
         notify_screen "Sunshine 防窥错误" "未在系统上找到可用的背光控制设备 (/sys/class/backlight)"
         exit 1
     fi
     if [ "$lock_mode" = "always" ]; then
+        pause_all_media_players
+        mute_physical_audio
+        rm -f "$AUDIO_STATE_FILE"
         lock_desktop_session
     fi
     exit 0
@@ -277,17 +340,20 @@ turn_off_screen() {
     # 1. 屏蔽 GNOME 亮度调节组合键 (Fn+亮度加/减) 与自动调光，从源头杜绝按键闪屏
     lock_brightness_keys
 
-    # 2. 切断物理背光与亮度
+    # 2. 静音电脑物理扬声器（保留 Sunshine 虚拟声卡正常向手机推流，防止断连瞬间物理喇叭外放社死）
+    mute_physical_audio
+
+    # 3. 切断物理背光与亮度
     echo 4 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo 0 > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
-    # 3. 抑制 GNOME 自动熄屏与系统休眠，保障串流满血不掉线
+    # 4. 抑制 GNOME 自动熄屏与系统休眠，保障串流满血不掉线
     start_idle_inhibitor
 
-    # 4. 启动背光兜底守护进程（防御插拔电源等底层事件点亮屏幕）
+    # 5. 启动背光兜底守护进程（防御插拔电源等底层事件点亮屏幕）
     start_brightness_guardian
 
-    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已熄灭（已屏蔽亮度快捷键，黑屏防窥生效）"
+    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已熄灭且物理扬声器已静音（黑屏防窥生效）"
 }
 
 turn_on_screen() {
@@ -313,10 +379,13 @@ turn_on_screen() {
 
     # 若当前屏幕已处于点亮状态（供电正常且亮度>0）且此前无防窥锁：
     # - 默认 (auto, 如 ExecStopPost / stop / restart 调用) 直接静默返回，绝不误锁本地正在使用的桌面！
-    # - 仅当 apps.json undo 显式传入 --lock (always) 时，才在退出正常亮屏串流后执行锁屏。
+    # - 仅当 apps.json undo 显式传入 --lock (always) 时，才在退出正常亮屏串流后暂停媒体、静音并执行锁屏。
     if [ "$cur_b" -gt 0 ] && [ "$cur_p" -eq 0 ] && [ "$had_lock" = false ]; then
-        rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE"
+        rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE" "$AUDIO_STATE_FILE"
         if [ "$lock_mode" = "always" ]; then
+            pause_all_media_players
+            mute_physical_audio
+            rm -f "$AUDIO_STATE_FILE"
             lock_desktop_session
         fi
         return 0
@@ -351,10 +420,16 @@ turn_on_screen() {
         fi
     fi
 
-    # 先拉下 GNOME 锁屏帷幕并等待 200ms 渲染就绪，再通电点亮物理背光，杜绝亮屏瞬间闪现桌面内容
+    # 先暂停媒体播放、确保物理喇叭静音并拉下 GNOME 锁屏帷幕（等待 200ms 渲染就绪），再通电点亮物理背光
     if [ "$lock_mode" = "auto" ] || [ "$lock_mode" = "always" ]; then
+        pause_all_media_players
+        mute_physical_audio
+        rm -f "$AUDIO_STATE_FILE"
         lock_desktop_session
         sleep 0.2
+    else
+        # 串流途中手动 toggle 切回正常亮屏：还原进入防窥前的物理声卡静音状态
+        restore_physical_audio
     fi
 
     echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
