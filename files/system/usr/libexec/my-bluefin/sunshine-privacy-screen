@@ -29,6 +29,7 @@ AUDIO_STATE_FILE="${STATE_DIR}/saved_audio_mute"
 INHIBIT_PID_FILE="${RUNTIME_DIR}/inhibit.pid"
 GUARDIAN_PID_FILE="${RUNTIME_DIR}/guardian.pid"
 KEYS_LOCK_FILE="${RUNTIME_DIR}/keys.locked"
+UNLOCK_WATCHER_PID_FILE="${RUNTIME_DIR}/unlock_watcher.pid"
 
 BRIGHTNESS_KEYS=(
     "screen-brightness-up"
@@ -45,6 +46,7 @@ stop_pid_file() {
         local pid=""
         read -r pid < "$pid_file" 2>/dev/null || true
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            pkill -P "$pid" 2>/dev/null || true
             kill "$pid" 2>/dev/null || true
         fi
         rm -f "$pid_file"
@@ -139,18 +141,136 @@ restore_physical_audio() {
     rm -f "$AUDIO_STATE_FILE"
 }
 
+stop_unlock_watcher() {
+    stop_pid_file "$UNLOCK_WATCHER_PID_FILE"
+}
+
+start_unlock_watcher() {
+    stop_unlock_watcher
+    mkdir -p "$RUNTIME_DIR"
+    # 后台轻量监听 GNOME 锁屏解除事件 (ActiveChanged -> false)
+    # 利用 stdbuf -oL 强制实时行缓冲，一旦用户在电脑前输入密码解锁，0ms 自动恢复物理声卡原本音量
+    (
+        local watcher_pid=$BASHPID
+        if command -v dbus-monitor >/dev/null 2>&1; then
+            local mon_cmd=(dbus-monitor)
+            if command -v stdbuf >/dev/null 2>&1; then
+                mon_cmd=(stdbuf -oL -eL dbus-monitor)
+            fi
+            "${mon_cmd[@]}" --session "interface='org.gnome.ScreenSaver',member='ActiveChanged'" 2>/dev/null | \
+            while IFS= read -r line; do
+                if [[ "$line" =~ boolean[[:space:]]+false ]]; then
+                    restore_physical_audio
+                    rm -f "$UNLOCK_WATCHER_PID_FILE"
+                    pkill -P "$watcher_pid" 2>/dev/null || true
+                    break
+                fi
+            done
+        else
+            restore_physical_audio
+        fi
+        rm -f "$UNLOCK_WATCHER_PID_FILE"
+    ) &
+    echo $! > "$UNLOCK_WATCHER_PID_FILE"
+}
+
+ensure_media_app_configs() {
+    # 1. 确保 wiliwili 开启底层 mpv.sock 支持（用于原生无损暂停，0 内存常驻）
+    local wili_base="${HOME}/.var/app/cn.xfangfang.wiliwili"
+    if [ -d "$wili_base" ]; then
+        local wili_cfg="${wili_base}/config/wiliwili"
+        local mpv_conf="${wili_cfg}/mpv.conf"
+        mkdir -p "$wili_cfg"
+        if [ ! -f "$mpv_conf" ] || ! grep -q "input-ipc-server" "$mpv_conf" 2>/dev/null; then
+            echo "input-ipc-server=~~/mpv.sock" >> "$mpv_conf" 2>/dev/null || true
+        fi
+    fi
+
+    # 2. 确保 Firefox 开启 MPRIS 媒体键支持（写入 user.js 持久化，覆盖 Flatpak 与原生配置）
+    local ff_dirs=(
+        "${HOME}/.var/app/org.mozilla.firefox/config/mozilla/firefox"
+        "${HOME}/.mozilla/firefox"
+    )
+    for ff_base in "${ff_dirs[@]}"; do
+        if [ -d "$ff_base" ]; then
+            for p in "$ff_base"/*.default*; do
+                if [ -d "$p" ]; then
+                    local ujs="${p}/user.js"
+                    if [ ! -f "$ujs" ] || ! grep -q "media.hardwaremediakeys.enabled" "$ujs" 2>/dev/null; then
+                        cat << 'EOF' >> "$ujs" 2>/dev/null || true
+user_pref("media.hardwaremediakeys.enabled", true);
+user_pref("media.mpris.enabled", true);
+EOF
+                    fi
+                fi
+            done
+        fi
+    done
+}
+
 pause_all_media_players() {
-    # 通过 D-Bus MPRIS 接口同步暂停所有正在播放的音视频媒体（浏览器、wiliwili、本地播放器等），等待播放器确认暂停后再恢复声卡
+    # 0. 若系统装有 playerctl，快速发送全局暂停
+    if command -v playerctl >/dev/null 2>&1; then
+        playerctl pause -a >/dev/null 2>&1 || true
+    fi
+
+    # 1. 优先通过原生 mpv IPC Socket 暂停 wiliwili 与 mpv（0 常驻内存开销，原生时钟暂停，绝不快进丢帧、绝不弹幕雪崩）
+    local mpv_socks=(
+        "${HOME}/.var/app/cn.xfangfang.wiliwili/config/wiliwili/mpv.sock"
+        "${XDG_RUNTIME_DIR:-/tmp}/mpv.sock"
+        "/tmp/mpv.sock"
+    )
+    for sock in "${mpv_socks[@]}"; do
+        if [ -S "$sock" ]; then
+            python3 -c '
+import socket, sys
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    s.connect(sys.argv[1])
+    s.sendall(b"{\"command\": [\"set_property\", \"pause\", true]}\n")
+    s.close()
+except Exception:
+    pass
+' "$sock" 2>/dev/null || true
+        fi
+    done
+
+    # 2. 通过 D-Bus MPRIS 接口同步暂停所有主流媒体应用（Firefox、Chrome、VLC、Spotify、网易云等）
+    local dests=()
     if command -v dbus-send >/dev/null 2>&1; then
-        local dests
-        dests=$(dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply \
+        while IFS= read -r line; do
+            [ -n "$line" ] && dests+=("$line")
+        done < <(dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply \
             /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
             | grep -Eo 'org\.mpris\.MediaPlayer2\.[^"]+' || true)
-        for d in $dests; do
-            dbus-send --session --dest="$d" --type=method_call --reply-timeout=500 --print-reply \
-                /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.Pause >/dev/null 2>&1 || true
-        done
     fi
+    if command -v busctl >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            if [ -n "$line" ]; then
+                local found=false
+                for d in "${dests[@]}"; do
+                    if [ "$d" = "$line" ]; then found=true; break; fi
+                done
+                [ "$found" = false ] && dests+=("$line")
+            fi
+        done < <(busctl --user list 2>/dev/null | awk '$1 ~ /^org\.mpris\.MediaPlayer2\./ {print $1}' || true)
+    fi
+
+    for d in "${dests[@]}"; do
+        # 优先发送 Pause（MPRIS 标准幂等指令，已暂停时静默无害）
+        if ! dbus-send --session --dest="$d" --type=method_call --reply-timeout=600 --print-reply \
+            /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.Pause >/dev/null 2>&1; then
+            # 仅当应用缺少 Pause 方法且当前明确处于 Playing 状态时，才尝试 PlayPause 兜底切换
+            local status=""
+            status=$(dbus-send --session --dest="$d" --type=method_call --reply-timeout=600 --print-reply \
+                /org/mpris/MediaPlayer2 org.freedesktop.DBus.Properties.Get string:'org.mpris.MediaPlayer2.Player' string:'PlaybackStatus' 2>/dev/null || true)
+            if echo "$status" | grep -qi 'string[[:space:]]\+"Playing"'; then
+                dbus-send --session --dest="$d" --type=method_call --reply-timeout=600 --print-reply \
+                    /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player.PlayPause >/dev/null 2>&1 || true
+            fi
+        fi
+    done
 }
 
 start_idle_inhibitor() {
@@ -298,10 +418,14 @@ if [ -z "$BACKLIGHT_DIR" ] || [ ! -d "$BACKLIGHT_DIR" ]; then
     fi
     if [ "$lock_mode" = "always" ]; then
         pause_all_media_players
+        mute_physical_audio
         lock_desktop_session
         sleep 0.2
+        start_unlock_watcher
+    else
+        stop_unlock_watcher
+        restore_physical_audio
     fi
-    restore_physical_audio
     exit 0
 fi
 
@@ -330,6 +454,12 @@ turn_off_screen() {
         notify_screen "Sunshine 防窥提示" "⚠️ 当前未处于手机连接串流状态，已阻止熄屏以防止误触黑屏锁死。" "critical" "dialog-warning"
         return 1
     fi
+
+    # 停止此前可能残留的解锁监听器
+    stop_unlock_watcher
+
+    # 自动确保 wiliwili (mpv.sock) 与 Firefox (user.js) 媒体配置就绪
+    ensure_media_app_configs
 
     local cur_b
     cur_b=$(get_current_brightness)
@@ -375,6 +505,9 @@ turn_on_screen() {
     cur_b=$(get_current_brightness)
     cur_p=$(get_bl_power)
 
+    # 同样确保媒体应用配置就绪（覆盖仅使用“正常亮屏”入口串流的场景）
+    ensure_media_app_configs
+
     if [ -f "$GUARDIAN_PID_FILE" ] || [ -f "$INHIBIT_PID_FILE" ] || [ -f "$KEYS_LOCK_FILE" ]; then
         had_lock=true
     fi
@@ -388,15 +521,19 @@ turn_on_screen() {
 
     # 若当前屏幕已处于点亮状态（供电正常且亮度>0）且此前无防窥锁：
     # - 默认 (auto, 如 ExecStopPost / stop / restart 调用) 直接静默返回，绝不误锁本地正在使用的桌面！
-    # - 仅当 apps.json undo 显式传入 --lock (always) 时，才在退出正常亮屏串流后暂停媒体并执行锁屏。
+    # - 仅当 apps.json undo 显式传入 --lock (always) 时，才在退出正常亮屏串流后暂停媒体、静音锁屏并在解锁时自动恢复声卡。
     if [ "$cur_b" -gt 0 ] && [ "$cur_p" -eq 0 ] && [ "$had_lock" = false ]; then
         rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE"
         if [ "$lock_mode" = "always" ]; then
             pause_all_media_players
+            mute_physical_audio
             lock_desktop_session
             sleep 0.2
+            start_unlock_watcher
+        else
+            stop_unlock_watcher
+            restore_physical_audio
         fi
-        restore_physical_audio
         return 0
     fi
 
@@ -429,13 +566,19 @@ turn_on_screen() {
         fi
     fi
 
-    # 先在静音状态下暂停所有媒体播放、拉下 GNOME 锁屏帷幕（等待 200ms 待锁屏渲染就绪且音频缓冲排空），再自动恢复串流前的物理声卡状态并通电点亮屏幕
+    # 先在静音状态下暂停所有媒体播放、确保物理喇叭持续静音并拉下 GNOME 锁屏帷幕（等待 200ms 待锁屏渲染就绪且音频缓冲排空）
+    # 随后启动后台解锁监听器：一旦用户在电脑前输入密码解锁，0ms 自动恢复物理声卡原本音量
     if [ "$lock_mode" = "auto" ] || [ "$lock_mode" = "always" ]; then
         pause_all_media_players
+        mute_physical_audio
         lock_desktop_session
         sleep 0.2
+        start_unlock_watcher
+    else
+        stop_unlock_watcher
+        # 串流途中手动 toggle 切回正常亮屏：还原进入防窥前的物理声卡静音状态
+        restore_physical_audio
     fi
-    restore_physical_audio
 
     echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo "$target_b" > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
