@@ -135,12 +135,50 @@ stop_brightness_guardian() {
 notify_screen() {
     local title="$1"
     local message="$2"
-    if [ -t 1 ]; then
-        echo "[$title] $message"
-    fi
+    local urgency="${3:-normal}"
+    local icon="${4:-display-symbolic}"
+    echo "[$title] $message"
     if command -v notify-send >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-${DISPLAY:-}}" ]; then
-        notify-send -u normal -i display-symbolic "$title" "$message" 2>/dev/null || true
+        notify-send -u "$urgency" -i "$icon" "$title" "$message" 2>/dev/null || true
     fi
+}
+
+is_sunshine_running() {
+    local svc="app-dev.lizardbyte.app.Sunshine.service"
+    if systemctl --user list-unit-files sunshine.service &>/dev/null; then
+        svc="sunshine.service"
+    fi
+    if systemctl --user is-active --quiet "$svc" 2>/dev/null; then
+        return 0
+    fi
+    if pgrep -u "$UID" -x "sunshine" >/dev/null 2>&1 || pgrep -x "sunshine" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+is_stream_active() {
+    # 1. 若当前环境携带 Sunshine 串流环境变量，说明由 Moonlight 连接事件 (prep-cmd) 直接触发
+    if [ -n "${SUNSHINE_CLIENT_NAME:-}" ] || [ -n "${SUNSHINE_CLIENT_ID:-}" ] || [ -n "${SUNSHINE_APP_ID:-}" ]; then
+        return 0
+    fi
+
+    # 2. 检查 Sunshine 基础服务是否处于运行状态
+    if ! is_sunshine_running; then
+        return 1
+    fi
+
+    # 3. 检查当前会话日志中最新的连接事件，确认是否有活跃的手机/客户端串流会话
+    local log_file="${STATE_DIR}/sunshine.log"
+    if [ -f "$log_file" ]; then
+        local last_event=""
+        last_event=$(grep -E "(CLIENT CONNECTED|CLIENT DISCONNECTED)" "$log_file" 2>/dev/null | tail -n 1)
+        if [[ "$last_event" == *"CLIENT CONNECTED"* ]]; then
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 action="${1:-toggle}"
@@ -190,6 +228,13 @@ get_bl_power() {
 }
 
 turn_off_screen() {
+    local force="${1:-false}"
+    # 安全门禁：只有在手机处于连接串流状态时才允许熄屏，防止误触黑屏锁死
+    if [ "$force" != "true" ] && ! is_stream_active; then
+        notify_screen "Sunshine 防窥提示" "⚠️ 当前未处于手机连接串流状态，已阻止熄屏以防止误触黑屏锁死。" "critical" "dialog-warning"
+        return 1
+    fi
+
     local cur_b
     cur_b=$(get_current_brightness)
 
@@ -278,9 +323,17 @@ turn_on_screen() {
     notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度与快捷键"
 }
 
+force_flag="false"
+if [ "${2:-}" = "--force" ] || [ "${2:-}" = "-f" ]; then
+    force_flag="true"
+fi
+
 case "$action" in
     "off"|"black")
-        turn_off_screen
+        turn_off_screen "$force_flag"
+        ;;
+    "force-off")
+        turn_off_screen "true"
         ;;
     "on"|"restore")
         turn_on_screen
@@ -291,7 +344,7 @@ case "$action" in
         if [ "$cur_b" -eq 0 ] || [ "$cur_p" -ne 0 ]; then
             turn_on_screen
         else
-            turn_off_screen
+            turn_off_screen "$force_flag"
         fi
         ;;
     "status")
