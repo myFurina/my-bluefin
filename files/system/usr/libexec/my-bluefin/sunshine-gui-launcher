@@ -80,7 +80,7 @@ ensure_sunshine_config() {
         if [ -f "$template_apps" ]; then
             cp "$template_apps" "$apps_file"
         fi
-    elif ! grep -q "sunshine-privacy-screen" "$apps_file"; then
+    elif ! grep -q "sunshine-privacy-screen on --lock" "$apps_file" 2>/dev/null; then
         cp "$apps_file" "${apps_file}.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
         if [ -f "$template_apps" ]; then
             cp "$template_apps" "$apps_file"

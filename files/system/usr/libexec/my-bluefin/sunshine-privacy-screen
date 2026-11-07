@@ -181,7 +181,28 @@ is_stream_active() {
     return 1
 }
 
+lock_desktop_session() {
+    # 1. 优先向 GNOME ScreenSaver 发送同步 D-Bus 锁屏调用（跨 systemd user service 最可靠）
+    if command -v dbus-send >/dev/null 2>&1; then
+        dbus-send --session --dest=org.gnome.ScreenSaver --type=method_call \
+            /org/gnome/ScreenSaver org.gnome.ScreenSaver.Lock 2>/dev/null || true
+    fi
+    # 2. 兜底使用 systemd loginctl lock-sessions（避免 user service 无 XDG_SESSION_ID 报错）
+    if command -v loginctl >/dev/null 2>&1; then
+        loginctl lock-sessions 2>/dev/null || true
+    fi
+}
+
 action="${1:-toggle}"
+force_flag="false"
+lock_mode="auto"
+for arg in "${@:2}"; do
+    case "$arg" in
+        "--force"|"-f") force_flag="true" ;;
+        "--no-lock") lock_mode="never" ;;
+        "--lock") lock_mode="always" ;;
+    esac
+done
 
 # 动态探测活跃的背光控制设备
 BACKLIGHT_DIR=""
@@ -200,11 +221,14 @@ if [ -z "$BACKLIGHT_DIR" ] || [ ! -d "$BACKLIGHT_DIR" ]; then
     stop_brightness_guardian
     stop_idle_inhibitor
     [ -f "$KEYS_LOCK_FILE" ] && unlock_brightness_keys
-    rm -f "$STATE_FILE"
+    rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE"
     if [ "$action" != "on" ] && [ "$action" != "restore" ]; then
         echo "⚠️ 未在系统上找到可用的背光控制设备 (/sys/class/backlight)" >&2
         notify_screen "Sunshine 防窥错误" "未在系统上找到可用的背光控制设备 (/sys/class/backlight)"
         exit 1
+    fi
+    if [ "$lock_mode" = "always" ]; then
+        lock_desktop_session
     fi
     exit 0
 fi
@@ -267,6 +291,11 @@ turn_off_screen() {
 }
 
 turn_on_screen() {
+    # lock_mode 取值:
+    # - "auto"   (默认): 仅当确实处于防窥熄屏状态恢复时才锁屏；若屏幕本就正常亮着则静默无操作返回（保护 ExecStopPost 不误锁本地桌面）
+    # - "always" (--lock): 串流结束 (apps.json undo) 显式调用，无论此前是否熄屏均锁定桌面
+    # - "never"  (--no-lock): 串流途中手动 toggle 恢复亮屏，只开背光不锁屏
+    local lock_mode="${1:-auto}"
     local cur_b cur_p had_lock=false
     cur_b=$(get_current_brightness)
     cur_p=$(get_bl_power)
@@ -282,9 +311,14 @@ turn_on_screen() {
         unlock_brightness_keys
     fi
 
-    # 若当前屏幕已处于点亮状态（供电正常且亮度>0）且此前无防窥锁，做幂等清理后静默返回（供 ExecStopPost 安全调用）
+    # 若当前屏幕已处于点亮状态（供电正常且亮度>0）且此前无防窥锁：
+    # - 默认 (auto, 如 ExecStopPost / stop / restart 调用) 直接静默返回，绝不误锁本地正在使用的桌面！
+    # - 仅当 apps.json undo 显式传入 --lock (always) 时，才在退出正常亮屏串流后执行锁屏。
     if [ "$cur_b" -gt 0 ] && [ "$cur_p" -eq 0 ] && [ "$had_lock" = false ]; then
-        rm -f "$STATE_FILE"
+        rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE"
+        if [ "$lock_mode" = "always" ]; then
+            lock_desktop_session
+        fi
         return 0
     fi
 
@@ -305,7 +339,7 @@ turn_on_screen() {
     # 优先恢复进入防窥前记录的实际亮度，并在恢复后清理状态文件
     if [ -f "$STATE_FILE" ]; then
         read -r target_b < "$STATE_FILE" 2>/dev/null || target_b=0
-        rm -f "$STATE_FILE"
+        rm -f "$STATE_FILE" "$AMBIENT_STATE_FILE"
     fi
 
     # 若未记录或数值无效，默认恢复为当前亮度（若 >0）或 50% 最大亮度
@@ -317,16 +351,21 @@ turn_on_screen() {
         fi
     fi
 
+    # 先拉下 GNOME 锁屏帷幕并等待 200ms 渲染就绪，再通电点亮物理背光，杜绝亮屏瞬间闪现桌面内容
+    if [ "$lock_mode" = "auto" ] || [ "$lock_mode" = "always" ]; then
+        lock_desktop_session
+        sleep 0.2
+    fi
+
     echo 0 > "${BACKLIGHT_DIR}/bl_power" 2>/dev/null || true
     echo "$target_b" > "${BACKLIGHT_DIR}/brightness" 2>/dev/null || true
 
-    notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度与快捷键"
+    if [ "$lock_mode" = "auto" ] || [ "$lock_mode" = "always" ]; then
+        notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度并已锁定桌面"
+    else
+        notify_screen "Sunshine 防窥模式" "电脑物理屏幕已恢复正常亮度与快捷键"
+    fi
 }
-
-force_flag="false"
-if [ "${2:-}" = "--force" ] || [ "${2:-}" = "-f" ]; then
-    force_flag="true"
-fi
 
 case "$action" in
     "off"|"black")
@@ -336,13 +375,14 @@ case "$action" in
         turn_off_screen "true"
         ;;
     "on"|"restore")
-        turn_on_screen
+        turn_on_screen "$lock_mode"
         ;;
     "toggle")
         cur_b=$(get_current_brightness)
         cur_p=$(get_bl_power)
         if [ "$cur_b" -eq 0 ] || [ "$cur_p" -ne 0 ]; then
-            turn_on_screen
+            # 串流中手动通过快捷方式切换亮屏，不强制锁屏以免打断当前操作
+            turn_on_screen "never"
         else
             turn_off_screen "$force_flag"
         fi
@@ -361,7 +401,7 @@ case "$action" in
         fi
         ;;
     *)
-        echo "用法: $0 {off|on|toggle|status}"
+        echo "用法: $0 {off|force-off|on|toggle|status} [--force|-f] [--lock|--no-lock]"
         exit 1
         ;;
 esac

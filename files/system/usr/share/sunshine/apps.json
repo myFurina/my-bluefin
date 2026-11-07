@@ -5,7 +5,13 @@
   "apps": [
     {
       "name": "桌面 (正常亮屏)",
-      "image-path": "desktop.png"
+      "image-path": "desktop.png",
+      "prep-cmd": [
+        {
+          "do": "",
+          "undo": "sunshine-privacy-screen on --lock"
+        }
+      ]
     },
     {
       "name": "桌面 (熄屏防窥)",
@@ -13,7 +19,7 @@
       "prep-cmd": [
         {
           "do": "sunshine-privacy-screen off",
-          "undo": "sunshine-privacy-screen on"
+          "undo": "sunshine-privacy-screen on --lock"
         }
       ]
     },
@@ -26,6 +32,10 @@
         {
           "do": "",
           "undo": "setsid steam steam://close/bigpicture"
+        },
+        {
+          "do": "",
+          "undo": "sunshine-privacy-screen on --lock"
         }
       ],
       "image-path": "steam.png"
