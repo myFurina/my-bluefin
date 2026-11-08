@@ -28,7 +28,6 @@ modules:
         - sunshine                     # 原生 Sunshine 游戏串流服务端 (支持 KMS 硬件零拷贝)
         - scrcpy                       # 原生安卓低延迟投屏与控制 (支持硬件加速与音频转发)
         - android-tools                # 提供 adb 与 fastboot 核心命令行
-        - android-udev-rules           # 免 root 自动识别各品牌安卓设备 USB 调试权限
         - google-droid-sans-fonts      # 提供 LocalSend 必需的 DroidSansFallbackFull.ttf
         - fcitx5
         - fcitx5-chinese-addons        # 中文拼音、双拼、云拼音支持

@@ -23,7 +23,11 @@ chmod 755 /usr/bin/fcitx5-prestart-setup /usr/bin/optimize-flathub
 chmod 755 /usr/libexec/my-bluefin/* 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/grub2/user.cfg /usr/share/ublue-os/vscode/extensions.list /usr/share/ublue-os/vscode/extensions/*.vsix 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/just/60-custom.just /usr/share/applications/*.desktop 2>/dev/null || true
-chmod 644 /usr/lib/udev/rules.d/60-sunshine.rules /usr/share/sunshine/apps.json /usr/share/icons/hicolor/*/*/*.png 2>/dev/null || true
+# 尝试同步社区最新 Android udev 规则（网络畅通即更新到最新，网络受限则保留仓库中内置的静态兜底版本）
+curl -fsSL https://raw.githubusercontent.com/M0Rf30/android-udev-rules/main/51-android.rules \
+    -o /usr/lib/udev/rules.d/51-android.rules 2>/dev/null || true
+
+chmod 644 /usr/lib/udev/rules.d/*.rules /usr/share/sunshine/apps.json /usr/share/icons/hicolor/*/*/*.png 2>/dev/null || true
 ln -sf /usr/bin/optimize-flathub /usr/bin/optimize-network
 ln -sf /usr/libexec/my-bluefin/sunshine-privacy-screen /usr/bin/sunshine-privacy-screen
 chmod 755 /usr/share/ublue-os/user-setup.hooks.d/*.sh 2>/dev/null || true
