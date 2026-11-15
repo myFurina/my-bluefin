@@ -61,6 +61,7 @@ modules:
     source: local
     install:
       - kimpanel@kde.org
+      - app-grid-tuner@m-lab
 
   # 4. 上游独立应用声明式原子模块
   - type: clash-verge
