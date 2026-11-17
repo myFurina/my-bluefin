@@ -13,14 +13,11 @@ modules:
         - https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo
         - https://packages.microsoft.com/yumrepos/vscode/config.repo  # 微软 VS Code 官方源
       copr:
-        - atim/starship                # 现代终端提示符 Starship
         - wezfurlong/wezterm-nightly   # WezTerm 每日构建源
         - lizardbyte/beta              # LizardByte Sunshine 官方原生 RPM 源
         - zeno/scrcpy                  # scrcpy 官方在 Fedora 推荐的 COPR 源
     install:
       packages:
-        - micro                        # 现代易用终端编辑器 Micro
-        - starship                     # 终端提示符 Starship
         - https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm # 原生 Google Chrome（供 Antigravity 浏览器技能直接调用）
         - code                         # 原生 VS Code
         - cloudflare-warp              # Cloudflare WARP 客户端
@@ -44,6 +41,14 @@ modules:
         - libvirt-client                        # virsh 等客户端管理工具
         - virtiofsd                             # 原生 Virtio-FS 共享内存守护进程（内存级极速共享）
         - edk2-ovmf                             # 原生 UEFI OVMF 固件
+        # --- C/C++ (GCC 路线) 与 Rust + Iced 开发底座 ---
+        - gdb                                   # GNU 调试器（支持 C/C++ 及 Rust 断点调试）
+        - cmake                                 # C/C++ 跨平台构建工具（配合 VS Code cmake-tools）
+        - rustup                                # Rust 工具链管理引导器 (rustup-init)
+        - wayland-devel                         # Wayland 客户端编译头文件（Iced / winit）
+        - libxkbcommon-devel                    # XKB 键盘布局与输入法处理头文件（Iced / winit）
+        - fontconfig-devel                      # 系统字体发现编译头文件
+        - freetype-devel                        # 字体渲染编译头文件
     remove:
       packages:
         - firefox                      # 移除原生火狐（改用自带全套解码器的 Flatpak 沙盒版）
@@ -95,6 +100,10 @@ modules:
       - ms-python.vscode-pylance
       - ms-python.debugpy
       - ms-python.vscode-python-envs
+
+      # Rust 全套现代开发套件
+      - rust-lang.rust-analyzer
+      - tamasfe.even-better-toml
 
   # 5. 系统底层规范化与收尾脚本
   - type: script

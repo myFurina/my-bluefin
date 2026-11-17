@@ -108,7 +108,10 @@ do_reset_terminal_env() {
     if [ -x /usr/share/ublue-os/user-setup.hooks.d/40-vscode-extensions.sh ]; then
         /usr/share/ublue-os/user-setup.hooks.d/40-vscode-extensions.sh 2>/dev/null || true
     fi
-    log_success "终端环境、OpenCode 启动器、Homebrew 与 VS Code 扩展已恢复出厂配置！"
+    if [ -x /usr/share/ublue-os/user-setup.hooks.d/50-rustup-init.sh ]; then
+        /usr/share/ublue-os/user-setup.hooks.d/50-rustup-init.sh 2>/dev/null || true
+    fi
+    log_success "终端环境、OpenCode 启动器、Homebrew、Rust 工具链与 VS Code 扩展已恢复出厂配置！"
 }
 
 # ------------------------------------------------------------------------------
@@ -192,6 +195,9 @@ mode_nuclear_reset() {
     fi
     if [ -x /usr/share/ublue-os/user-setup.hooks.d/40-vscode-extensions.sh ]; then
         /usr/share/ublue-os/user-setup.hooks.d/40-vscode-extensions.sh 2>/dev/null || true
+    fi
+    if [ -x /usr/share/ublue-os/user-setup.hooks.d/50-rustup-init.sh ]; then
+        /usr/share/ublue-os/user-setup.hooks.d/50-rustup-init.sh 2>/dev/null || true
     fi
 
     log_success "主目录已彻底重构为纯净开箱状态！"
