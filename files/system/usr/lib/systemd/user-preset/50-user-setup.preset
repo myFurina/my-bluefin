@@ -1,0 +1,2 @@
+# 确保 ublue 核心用户初始化钩子服务在用户会话启动时默认启用
+enable ublue-user-setup.service
