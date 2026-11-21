@@ -11,20 +11,14 @@ mkdir -p "$HOME/.local/state" "$HOME/.local/bin"
 # 1. 桌面出厂环境一次性初装（仅在首登时执行一次，成功后永久跳过，避免每次登录循环激活扩展）
 DESKTOP_INIT_FLAG="$HOME/.local/state/.desktop-firstboot-done"
 if [ ! -f "${DESKTOP_INIT_FLAG}" ]; then
-    # 1.1 补齐 LocalSend 等应用所需的回退中文字体
-    mkdir -p "$HOME/.local/share/fonts"
-    if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
-        cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
-    fi
-
-    # 1.2 下发 WezTerm 默认配置并静默 Bluefin 终端 MOTD
+    # 1.1 下发 WezTerm 默认配置并静默 Bluefin 终端 MOTD
     mkdir -p "$HOME/.config/wezterm"
     touch "$HOME/.config/no-show-user-motd"
     if [ ! -f "$HOME/.config/wezterm/wezterm.lua" ] && [ -f /usr/share/ublue-os/my-brew/wezterm.lua ]; then
         cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
     fi
 
-    # 1.3 激活系统级预置 GNOME 扩展（出厂首登初始化一次即可）
+    # 1.2 激活系统级预置 GNOME 扩展（出厂首登初始化一次即可）
     if [ -d "/usr/share/gnome-shell/extensions" ]; then
         for ext_path in /usr/share/gnome-shell/extensions/*; do
             if [ -d "${ext_path}" ]; then
@@ -37,7 +31,32 @@ if [ ! -f "${DESKTOP_INIT_FLAG}" ]; then
     touch "${DESKTOP_INIT_FLAG}"
 fi
 
-# 2. 托管 OpenCode V2 至用户可写目录 ~/.local/bin/opencode（未安装则装，有镜像更新则更新）
+# 2. 托管应用专属字体（LocalSend 与 wiliwili）
+# 当镜像内置了 NotoSansSC-Mega 定制字体时，自动同步至用户态并配置各应用对应字体路径
+if [ -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf ]; then
+    mkdir -p "$HOME/.local/share/fonts"
+    # 2.1 同步用户字体库 ~/.local/share/fonts/NotoSansSC-Mega.ttf
+    if [ ! -f "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf" ] || [ /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf -nt "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf" ]; then
+        cp -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf"
+    fi
+
+    # 2.2 确保 LocalSend 回退字体指向 NotoSansSC-Mega（彻底替换旧版 DroidSansFallbackFull）
+    if [ ! -L "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] || [ "$(readlink "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" 2>/dev/null)" != "NotoSansSC-Mega.ttf" ]; then
+        ln -sf NotoSansSC-Mega.ttf "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf"
+    fi
+
+    # 2.3 部署 wiliwili UI 字体与弹幕字体
+    WILIWILI_CONF_DIR="$HOME/.var/app/cn.xfangfang.wiliwili/config/wiliwili"
+    mkdir -p "${WILIWILI_CONF_DIR}"
+    if [ ! -f "${WILIWILI_CONF_DIR}/font.ttf" ] || [ /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf -nt "${WILIWILI_CONF_DIR}/font.ttf" ]; then
+        cp -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf "${WILIWILI_CONF_DIR}/font.ttf"
+    fi
+    if [ ! -f "${WILIWILI_CONF_DIR}/danmaku.ttf" ] || [ /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf -nt "${WILIWILI_CONF_DIR}/danmaku.ttf" ]; then
+        cp -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf "${WILIWILI_CONF_DIR}/danmaku.ttf"
+    fi
+fi
+
+# 3. 托管 OpenCode V2 至用户可写目录 ~/.local/bin/opencode（未安装则装，有镜像更新则更新）
 if [ ! -f "$HOME/.config/opencode-initialized" ] && [ -f /usr/share/ublue-os/my-brew/opencode ]; then
     cp -f /usr/share/ublue-os/my-brew/opencode "$HOME/.local/bin/opencode"
     chmod 755 "$HOME/.local/bin/opencode"
@@ -47,7 +66,7 @@ elif [ -f "$HOME/.local/bin/opencode" ] && [ -f /usr/share/ublue-os/my-brew/open
     chmod 755 "$HOME/.local/bin/opencode"
 fi
 
-# 3. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量（含 Git 镜像）及首次就绪检测
+# 4. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量（含 Git 镜像）及首次就绪检测
 if ! grep -q "linuxbrew" "$HOME/.bashrc" 2>/dev/null; then
     cat << 'BREWENV' >> "$HOME/.bashrc"
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null)"
@@ -69,7 +88,7 @@ export HOMEBREW_CORE_GIT_REMOTE="https://mirrors.tuna.tsinghua.edu.cn/git/homebr
 BREW_GIT_ENV
 fi
 
-# 4. 自动校准 Homebrew 自身 Git 仓库至清华镜像（一次性操作，成功后立 flag 永久跳过）
+# 5. 自动校准 Homebrew 自身 Git 仓库至清华镜像（一次性操作，成功后立 flag 永久跳过）
 BREW_MIRROR_FLAG="$HOME/.local/state/.brew-git-mirror-done"
 if [ ! -f "$BREW_MIRROR_FLAG" ]; then
     brew_repo="/home/linuxbrew/.linuxbrew/Homebrew"
@@ -90,7 +109,7 @@ if [ ! -f "$BREW_MIRROR_FLAG" ]; then
     fi
 fi
 
-# 5. 增量差分检测：仅对未推介过的新配方执行安装，用户主动卸载的工具绝不重新下载
+# 6. 增量差分检测：仅对未推介过的新配方执行安装，用户主动卸载的工具绝不重新下载
 BREWFILE="/usr/share/ublue-os/my-brew/Brewfile"
 PROVISIONED_FILE="$HOME/.local/state/brew-provisioned.list"
 LEGACY_FLAG="$HOME/.config/user-brew-installed"

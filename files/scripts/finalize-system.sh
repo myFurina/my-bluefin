@@ -42,7 +42,8 @@ chmod 644 /etc/profile.d/90-rust-cargo.sh /usr/lib/environment.d/10-rust-mirror.
 curl -fsSL https://raw.githubusercontent.com/M0Rf30/android-udev-rules/main/51-android.rules \
     -o /usr/lib/udev/rules.d/51-android.rules 2>/dev/null || true
 
-chmod 644 /usr/lib/udev/rules.d/*.rules /usr/share/sunshine/apps.json /usr/share/icons/hicolor/*/*/*.png 2>/dev/null || true
+chmod 644 /usr/lib/udev/rules.d/*.rules /usr/share/sunshine/apps.json /usr/share/icons/hicolor/*/*/*.png /usr/share/fonts/NotoSansSC-Mega/*.ttf 2>/dev/null || true
+fc-cache -f /usr/share/fonts/NotoSansSC-Mega 2>/dev/null || true
 ln -sf /usr/bin/optimize-flathub /usr/bin/optimize-network
 ln -sf /usr/libexec/my-bluefin/sunshine-privacy-screen /usr/bin/sunshine-privacy-screen
 chmod 755 /usr/share/ublue-os/user-setup.hooks.d/*.sh 2>/dev/null || true
