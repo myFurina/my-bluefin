@@ -35,17 +35,12 @@ fi
 # 当镜像内置了 NotoSansSC-Mega 定制字体时，自动同步至用户态并配置各应用对应字体路径
 if [ -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf ]; then
     mkdir -p "$HOME/.local/share/fonts"
-    # 2.1 同步用户字体库 ~/.local/share/fonts/NotoSansSC-Mega.ttf
+    # 2.1 同步用户字体库 ~/.local/share/fonts/NotoSansSC-Mega.ttf（供系统及 LocalSend 原生匹配渲染）
     if [ ! -f "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf" ] || [ /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf -nt "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf" ]; then
         cp -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf"
     fi
 
-    # 2.2 确保 LocalSend 回退字体指向 NotoSansSC-Mega（彻底替换旧版 DroidSansFallbackFull）
-    if [ ! -L "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] || [ "$(readlink "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" 2>/dev/null)" != "NotoSansSC-Mega.ttf" ]; then
-        ln -sf NotoSansSC-Mega.ttf "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf"
-    fi
-
-    # 2.3 部署 wiliwili UI 字体与弹幕字体
+    # 2.2 部署 wiliwili UI 字体与弹幕字体
     WILIWILI_CONF_DIR="$HOME/.var/app/cn.xfangfang.wiliwili/config/wiliwili"
     mkdir -p "${WILIWILI_CONF_DIR}"
     if [ ! -f "${WILIWILI_CONF_DIR}/font.ttf" ] || [ /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf -nt "${WILIWILI_CONF_DIR}/font.ttf" ]; then
