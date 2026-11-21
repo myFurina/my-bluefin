@@ -297,10 +297,29 @@ do_restore() {
         btrfs subvolume snapshot "${snap_dir}/var" "${MNT_DIR}/var" >/dev/null
     fi
 
-    # 3. 恢复 /etc 配置
+    # 3. 恢复 /etc 配置（防灾保护：跨 OSTree 版本禁止盲目全量覆盖，非破坏性同步并保留预备份）
     if [ -d "${snap_dir}/etc" ]; then
-        log_info "正在回滚系统全局配置 (/etc)..."
-        rsync -aAX --delete "${snap_dir}/etc/" /etc/ 2>/dev/null || true
+        local current_commit="unknown"
+        if command -v rpm-ostree >/dev/null 2>&1; then
+            current_commit=$(rpm-ostree status --json 2>/dev/null | jq -r '.deployments[0].checksum // "unknown"' || echo "unknown")
+        fi
+        local snap_commit="unknown"
+        if [ -f "${snap_dir}/info.json" ]; then
+            snap_commit=$(jq -r '.ostree_commit // "unknown"' "${snap_dir}/info.json")
+        fi
+
+        if [ "${snap_commit}" != "unknown" ] && [ "${current_commit}" != "unknown" ] && [ "${snap_commit}" != "${current_commit}" ]; then
+            log_warn "检测到当前 OSTree 镜像部署版本与快照记录的版本不一致！"
+            log_warn "为防止旧 /etc 覆盖新系统导致 PAM 认证失效、服务崩溃或无法登录，已跳过全量覆盖 /etc/。"
+            log_warn "快照历史 /etc 数据完整保留在 ${snap_dir}/etc，如需特定配置可按需提取。"
+            log_warn "提示：如需回滚基础操作系统，请优先使用官方原子回滚机制: rpm-ostree rollback"
+        else
+            log_info "正在安全备份当前 /etc 并执行非破坏性增量同步..."
+            local backup_etc="${MNT_DIR}/etc.pre-restore.$(date +%s)"
+            cp -a /etc "${backup_etc}" 2>/dev/null || true
+            # 移除高危的 --delete 参数，保留新系统新增的关键服务与认证配置
+            rsync -aAX "${snap_dir}/etc/" /etc/ 2>/dev/null || true
+        fi
     fi
 
     sync

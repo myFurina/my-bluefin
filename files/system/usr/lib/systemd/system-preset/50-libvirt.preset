@@ -2,4 +2,6 @@ enable libvirtd.service
 enable virtiofsd.service
 enable virtqemud.socket
 enable virtnetworkd.socket
+enable virtlogd.socket
+enable virtnodedevd.socket
 enable virtstoraged.socket

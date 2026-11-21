@@ -38,6 +38,8 @@ modules:
         - fcitx5-qt6                   # Qt6 模块支持
         - fcitx5-configtool            # 图形化配置面板
         - virt-manager                          # 原生虚拟机图形管理器（无沙盒限制）
+        - virt-install                          # 补齐命令行快速创建虚拟机的核心工具
+        - virt-viewer                           # 原生 SPICE/VNC 轻量控制台查看器
         - qemu-kvm                              # QEMU/KVM 硬件虚拟化核心模拟器
         - libvirt-daemon-kvm                    # 原生 KVM 虚拟化核心守护进程
         - libvirt-daemon-config-network         # 提供开箱即用的 default NAT 虚拟网络 (virbr0)

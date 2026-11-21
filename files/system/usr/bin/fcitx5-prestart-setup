@@ -26,6 +26,3 @@ fi
 if [ ! -f "$HOME/.config/fcitx5/config" ] && [ -f /usr/share/ublue-os/fcitx5-profile/config ]; then
     cp /usr/share/ublue-os/fcitx5-profile/config "$HOME/.config/fcitx5/config"
 fi
-if [ ! -f "$HOME/.config/fcitx5/conf/notifications.conf" ] && [ -f /usr/share/ublue-os/fcitx5-profile/conf/notifications.conf ]; then
-    cp /usr/share/ublue-os/fcitx5-profile/conf/notifications.conf "$HOME/.config/fcitx5/conf/notifications.conf"
-fi

@@ -1,7 +1,4 @@
-# Rustup / Cargo 国内中科大镜像及用户级工具链 PATH 注入
-export RUSTUP_DIST_SERVER="https://mirrors.ustc.edu.cn/rust-static"
-export RUSTUP_UPDATE_ROOT="https://mirrors.ustc.edu.cn/rust-static/rustup"
-
+# Rustup / Cargo 用户级工具链 PATH 注入（镜像环境变量统一由 environment.d/10-rust-mirror.conf 托管）
 if [ -d "$HOME/.cargo/bin" ]; then
     case ":$PATH:" in
         *":$HOME/.cargo/bin:"*) ;;

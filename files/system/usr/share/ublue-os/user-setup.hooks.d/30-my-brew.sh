@@ -18,16 +18,6 @@ if [ ! -f "${DESKTOP_INIT_FLAG}" ]; then
         cp /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
     fi
 
-    # 1.2 激活系统级预置 GNOME 扩展（出厂首登初始化一次即可）
-    if [ -d "/usr/share/gnome-shell/extensions" ]; then
-        for ext_path in /usr/share/gnome-shell/extensions/*; do
-            if [ -d "${ext_path}" ]; then
-                ext_uuid=$(basename "${ext_path}")
-                gnome-extensions enable "${ext_uuid}" 2>/dev/null || true
-            fi
-        done
-    fi
-
     touch "${DESKTOP_INIT_FLAG}"
 fi
 
