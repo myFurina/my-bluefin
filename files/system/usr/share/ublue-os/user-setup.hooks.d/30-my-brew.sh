@@ -21,23 +21,39 @@ if [ ! -f "${DESKTOP_INIT_FLAG}" ]; then
     touch "${DESKTOP_INIT_FLAG}"
 fi
 
-# 2. 托管应用专属字体（LocalSend 与 wiliwili）
-# 当镜像内置了 NotoSansSC-Mega 定制字体时，自动同步至用户态并配置各应用对应字体路径
-if [ -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf ]; then
+# 2. 托管应用专属字体（LocalSend、MarkText 与 wiliwili）
+# 当镜像内置了 NotoSansSC-Mega 定制字体族时，自动同步至用户态并配置各应用对应字体路径
+if [ -d /usr/share/fonts/NotoSansSC-Mega ]; then
     mkdir -p "$HOME/.local/share/fonts"
-    # 2.1 同步用户字体库 ~/.local/share/fonts/NotoSansSC-Mega.ttf（供系统及 LocalSend 原生匹配渲染）
-    if [ ! -f "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf" ] || [ /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf -nt "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf" ]; then
-        cp -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf"
+    # 2.1 同步用户字体库 NotoSansSC-Mega 字体族（包含 Regular 常规体与 Bold 原生粗体，供 MarkText、LocalSend 原生匹配）
+    for f in /usr/share/fonts/NotoSansSC-Mega/*.ttf; do
+        if [ -f "$f" ]; then
+            fname=$(basename "$f")
+            if [ ! -f "$HOME/.local/share/fonts/$fname" ] || [ "$f" -nt "$HOME/.local/share/fonts/$fname" ]; then
+                cp -f "$f" "$HOME/.local/share/fonts/$fname"
+            fi
+        fi
+    done
+    if [ ! -f "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf" ] && [ -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Regular.ttf" ]; then
+        ln -sf NotoSansSC-Mega-Regular.ttf "$HOME/.local/share/fonts/NotoSansSC-Mega.ttf"
+    fi
+    # 2.2 保持 DroidSansFallbackFull 作为全局后备字体
+    if [ ! -f "$HOME/.local/share/fonts/DroidSansFallbackFull.ttf" ] && [ -f /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf ]; then
+        cp /usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf "$HOME/.local/share/fonts/"
     fi
 
-    # 2.2 部署 wiliwili UI 字体与弹幕字体
+    # 2.3 部署 wiliwili UI 字体（Regular）与弹幕字体（Bold 粗体更醒目）
     WILIWILI_CONF_DIR="$HOME/.var/app/cn.xfangfang.wiliwili/config/wiliwili"
     mkdir -p "${WILIWILI_CONF_DIR}"
-    if [ ! -f "${WILIWILI_CONF_DIR}/font.ttf" ] || [ /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf -nt "${WILIWILI_CONF_DIR}/font.ttf" ]; then
-        cp -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf "${WILIWILI_CONF_DIR}/font.ttf"
+    if [ -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Regular.ttf" ]; then
+        if [ ! -f "${WILIWILI_CONF_DIR}/font.ttf" ] || [ "$HOME/.local/share/fonts/NotoSansSC-Mega-Regular.ttf" -nt "${WILIWILI_CONF_DIR}/font.ttf" ]; then
+            cp -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Regular.ttf" "${WILIWILI_CONF_DIR}/font.ttf"
+        fi
     fi
-    if [ ! -f "${WILIWILI_CONF_DIR}/danmaku.ttf" ] || [ /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf -nt "${WILIWILI_CONF_DIR}/danmaku.ttf" ]; then
-        cp -f /usr/share/fonts/NotoSansSC-Mega/NotoSansSC-Mega.ttf "${WILIWILI_CONF_DIR}/danmaku.ttf"
+    if [ -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Bold.ttf" ]; then
+        if [ ! -f "${WILIWILI_CONF_DIR}/danmaku.ttf" ] || [ "$HOME/.local/share/fonts/NotoSansSC-Mega-Bold.ttf" -nt "${WILIWILI_CONF_DIR}/danmaku.ttf" ]; then
+            cp -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Bold.ttf" "${WILIWILI_CONF_DIR}/danmaku.ttf"
+        fi
     fi
 fi
 
