@@ -47,7 +47,7 @@ if [ -z "${MY_BLUEFIN_RUSTUP_BG_WORKER:-}" ] && command -v systemd-run >/dev/nul
 fi
 
 run_rustup_worker() {
-    LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/simon-rustup.lock"
+    LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/my-bluefin-rustup-${UID}.lock"
     exec 201>"${LOCK_FILE}"
     if ! flock -n 201; then
         exit 0

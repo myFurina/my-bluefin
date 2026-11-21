@@ -1,0 +1,5 @@
+enable libvirtd.service
+enable virtiofsd.service
+enable virtqemud.socket
+enable virtnetworkd.socket
+enable virtstoraged.socket

@@ -145,7 +145,7 @@ if [ -z "${MY_BLUEFIN_BG_WORKER:-}" ] && command -v systemd-run >/dev/null 2>&1;
 fi
 
 run_brew_worker() {
-    LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/simon-brew.lock"
+    LOCK_FILE="${XDG_RUNTIME_DIR:-/tmp}/my-bluefin-brew-${UID}.lock"
     exec 200>"$LOCK_FILE"
     if ! flock -n 200; then
         exit 0

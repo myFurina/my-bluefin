@@ -248,26 +248,24 @@ end
 wezterm.on("gui-startup", function(cmd)
     local tab, pane, window = wezterm.mux.spawn_window(cmd or {})
 
-    -- 如果外部指定了工作目录（如文件夹右键打开），直接进入该目录，不弹出选择框
-    if cmd and cmd.cwd and cmd.cwd ~= "" then
-        return
-    end
-
-    local gui = window:gui_window()
-    if gui then
-        gui:perform_action(wezterm.action.InputSelector {
-            title = "选择终端类型",
-            choices = STARTUP_CHOICES,
-            fuzzy = true,
-            action = wezterm.action_callback(function(win, win_pane, id)
-                if not id then return end
-                local args = STARTUP_ARGS[id]
-                if args and (args[1] ~= "bash") then
-                    win:perform_action(wezterm.action.SpawnCommandInNewTab { args = args }, win_pane)
-                    pane:window():active_tab():activate()
-                end
-            end),
-        }, pane)
+    -- 仅当启动菜单存在多个不同终端选项且未指定外部目录时，才弹出选择框
+    if #STARTUP_CHOICES > 1 and not (cmd and cmd.cwd and cmd.cwd ~= "") then
+        local gui = window:gui_window()
+        if gui then
+            gui:perform_action(wezterm.action.InputSelector {
+                title = "选择终端类型",
+                choices = STARTUP_CHOICES,
+                fuzzy = true,
+                action = wezterm.action_callback(function(win, win_pane, id)
+                    if not id then return end
+                    local args = STARTUP_ARGS[id]
+                    if args and (args[1] ~= "bash") then
+                        win:perform_action(wezterm.action.SpawnCommandInNewTab { args = args }, win_pane)
+                        pane:window():active_tab():activate()
+                    end
+                end),
+            }, pane)
+        end
     end
 end)
 
