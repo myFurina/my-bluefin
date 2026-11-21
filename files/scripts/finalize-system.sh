@@ -2,7 +2,7 @@
 set -oue pipefail
 
 # ==============================================================================
-# 1. 收敛 Cloudflare WARP 自启残留（移除 /etc 自启项并归档至 /usr/lib）
+# 1. 收敛 Cloudflare WARP 自启残留与恢复标准软件源
 # ==============================================================================
 echo "==> 正在清理 Cloudflare WARP 开机与桌面自启残留..."
 mkdir -p /usr/lib/systemd/system
@@ -13,6 +13,20 @@ elif [ -f /opt/cloudflare-warp/warp-svc.service ]; then
 fi
 rm -f /etc/systemd/system/multi-user.target.wants/warp-svc.service
 rm -f /etc/xdg/autostart/com.cloudflare.WarpTaskbar.desktop /etc/xdg/autostart/warp-taskbar.desktop
+
+if [ -f /etc/yum.repos.d/cloudflare-warp.repo ]; then
+    echo "==> 正在恢复 Cloudflare WARP 系统源为标准自适应 \$releasever 配置 (支持未来自动升级与容错)..."
+    cat << 'EOF' > /etc/yum.repos.d/cloudflare-warp.repo
+[cloudflare-warp-stable]
+name=cloudflare-warp-stable
+baseurl=https://pkg.cloudflareclient.com/rpm/$releasever
+enabled=1
+type=rpm
+gpgcheck=1
+gpgkey=https://pkg.cloudflareclient.com/pubkey.gpg
+skip_if_unavailable=True
+EOF
+fi
 
 # ==============================================================================
 # 2. 修正静态文件权限与建立 systemd 服务软链接

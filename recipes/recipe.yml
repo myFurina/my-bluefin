@@ -6,11 +6,15 @@ base-image: ghcr.io/ublue-os/bluefin-nvidia-open
 image-version: stable
 
 modules:
+  # 0. 动态第三方软件源环境自适应探测（自动探测 Cloudflare WARP 官方可用源并生成构建期临时配置）
+  - type: script
+    scripts:
+      - prepare-cloudflare-repo.sh
+
   # 1. 原生系统级软件包安装与清理（DNF）
   - type: dnf
     repos:
       files:
-        - https://pkg.cloudflareclient.com/cloudflare-warp-ascii.repo
         - https://packages.microsoft.com/yumrepos/vscode/config.repo  # 微软 VS Code 官方源
       copr:
         - wezfurlong/wezterm-nightly   # WezTerm 每日构建源
@@ -20,12 +24,11 @@ modules:
       packages:
         - https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm # 原生 Google Chrome（供 Antigravity 浏览器技能直接调用）
         - code                         # 原生 VS Code
-        - cloudflare-warp              # Cloudflare WARP 客户端
+        - cloudflare-warp              # Cloudflare WARP 客户端（统一在单次事务中安装）
         - wezterm                      # WezTerm Nightly
         - sunshine                     # 原生 Sunshine 游戏串流服务端 (支持 KMS 硬件零拷贝)
         - scrcpy                       # 原生安卓低延迟投屏与控制 (支持硬件加速与音频转发)
         - android-tools                # 提供 adb 与 fastboot 核心命令行
-        - google-droid-sans-fonts      # 提供 LocalSend 必需的 DroidSansFallbackFull.ttf
         - fcitx5
         - fcitx5-chinese-addons        # 中文拼音、双拼、云拼音支持
         - fcitx5-rime                  # Rime 输入法引擎
