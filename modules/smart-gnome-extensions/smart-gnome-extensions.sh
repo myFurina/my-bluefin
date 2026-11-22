@@ -27,6 +27,12 @@ for ITEM in ${INSTALL_ITEMS}; do
     echo "------------------------------------------------------------------------------"
     echo "==> 正在检索并解析扩展: [${ITEM}]..."
 
+    # 若系统目录已预置该扩展（例如基础镜像已包含的 caffeine 或经典菜单组件），直接就绪无需网络拉取
+    if [ -d "/usr/share/gnome-shell/extensions/${ITEM}" ] && [ -f "/usr/share/gnome-shell/extensions/${ITEM}/metadata.json" ]; then
+        echo "==> 检测到 [${ITEM}] 已预装于系统扩展目录中，跳过在线下载，直接就绪并纳入激活。"
+        continue
+    fi
+
     # 对查询词进行 URL 编码
     ENCODED_QUERY=$(python3 -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))' "${ITEM}")
 
@@ -161,6 +167,69 @@ except Exception as e:
     echo "==> [${EXT_NAME}] (${EXT_UUID}) 部署集成完成！"
 done
 
+# ==============================================================================
+# 9. 智能动态闭环：继承上游 Bluefin 官方扩展，并自动激活本次安装的扩展
+# ==============================================================================
+echo "------------------------------------------------------------------------------"
+echo "==> 正在智能合并上游 Bluefin 官方扩展与自定义扩展清单..."
+python3 - "${INSTALL_ITEMS}" << 'PYEOF'
+import os
+import re
+import sys
+
+raw_declared = sys.argv[1].split() if len(sys.argv) > 1 else []
+SCHEMAS_DIR = "/usr/share/glib-2.0/schemas"
+EXT_BASE = "/usr/share/gnome-shell/extensions"
+
+# 1. 动态嗅探上游官方当天生效的所有默认扩展清单
+upstream_exts = []
+if os.path.isdir(SCHEMAS_DIR):
+    for fname in sorted(os.listdir(SCHEMAS_DIR)):
+        if fname.endswith(".override") and not fname.startswith("zz1-custom"):
+            try:
+                with open(os.path.join(SCHEMAS_DIR, fname), "r", encoding="utf-8") as f:
+                    content = f.read()
+                match = re.search(r'enabled-extensions\s*=\s*\[(.*?)\]', content, re.DOTALL)
+                if match:
+                    for item in re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)):
+                        if item not in upstream_exts:
+                            upstream_exts.append(item)
+            except Exception:
+                pass
+
+# 2. 物理扫描磁盘中实际安装成功的扩展
+installed_exts = set()
+if os.path.isdir(EXT_BASE):
+    installed_exts = {d for d in os.listdir(EXT_BASE) if os.path.isdir(os.path.join(EXT_BASE, d))}
+
+# 3. 动态合并：
+# 优先保留上游官方项（仅当其确实安装在系统中）
+final_list = []
+for ext in upstream_exts:
+    if ext in installed_exts and ext not in final_list:
+        final_list.append(ext)
+
+# 追加本次声明安装的自定义扩展（仅当其切实存在）
+for ext in raw_declared:
+    if ext in installed_exts and ext not in final_list:
+        final_list.append(ext)
+
+print(f"==> 成功合并 {len(final_list)} 个系统级扩展 (含官方与自定义):")
+for ext in final_list:
+    src_label = "【上游官方】" if ext in upstream_exts else "【声明追加】"
+    print(f"    + {src_label} {ext}")
+
+# 4. 生成自适应高优先级 override 文件
+os.makedirs(SCHEMAS_DIR, exist_ok=True)
+target_file = os.path.join(SCHEMAS_DIR, "zz1-custom-extensions.gschema.override")
+with open(target_file, "w", encoding="utf-8") as f:
+    f.write(f"[org.gnome.shell]\nenabled-extensions={final_list}\n")
+
+PYEOF
+
+# 立即编译全局 GSettings Schemas 确保开箱即用
+glib-compile-schemas /usr/share/glib-2.0/schemas/
+
 echo "=============================================================================="
-echo "==> [smart-gnome-extensions] 所有声明扩展处理完毕。"
+echo "==> [smart-gnome-extensions] 所有声明扩展处理完毕并已成功与官方清单合并激活。"
 echo "=============================================================================="

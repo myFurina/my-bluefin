@@ -66,7 +66,7 @@ modules:
       - source: system
         destination: /
 
-  # 3. 声明式智能 GNOME 扩展模块（上游精准匹配 + 缺失版本自动兜底与 metadata 兼容性补丁）
+  # 3. 声明式智能 GNOME 扩展模块（自动继承上游官方扩展 + 专属扩展安装与激活）
   - type: smart-gnome-extensions
     source: local
     install:
