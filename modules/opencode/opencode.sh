@@ -11,9 +11,9 @@ TARGET_DIR="${TARGET_DIR:-/usr/share/ublue-os/my-brew}"
 
 echo "==> 正在从 anomalyco/homebrew-tap 解析最新版 OpenCode V2..."
 FORMULA_CONTENT=$(curl -sfSL --connect-timeout 15 --retry 3 https://raw.githubusercontent.com/anomalyco/homebrew-tap/HEAD/opencode-v2.rb || true)
-PARSED_FORMULA=$(printf '%s' "${FORMULA_CONTENT}" | python3 - <<'PYEOF' || true
-import re, sys
-text = sys.stdin.read()
+PARSED_FORMULA=$(FORMULA_CONTENT="${FORMULA_CONTENT}" python3 - <<'PYEOF' || true
+import os, re
+text = os.environ.get("FORMULA_CONTENT", "")
 m = re.search(
     r"""url\s+["'](https://[^"']+opencode-linux-x64[^"']*\.tar\.gz)["'](?:\s+sha256\s+["']([0-9a-fA-F]{64})["'])?""",
     text,
