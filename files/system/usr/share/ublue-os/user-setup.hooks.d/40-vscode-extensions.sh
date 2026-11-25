@@ -86,6 +86,12 @@ if [ -z "${MY_BLUEFIN_BG_WORKER:-}" ] && command -v systemd-run >/dev/null 2>&1;
 fi
 
 run_vscode_worker() {
+    LOCK_FILE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/my-bluefin-vscode-${UID}.lock"
+    exec 202>"${LOCK_FILE}"
+    if ! flock -n 202; then
+        exit 0
+    fi
+
     # 等待桌面网络就绪
     sleep 5
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 仅对普通真实用户执行，跳过 gdm、gdm-greeter 等系统虚拟用户与锁屏会话
+# 仅对普通真实用户执行，跳过 gdm、gdm-greeter 等系统虚拟用户与锁屏/登录界面会话
 [ "$(id -u)" -lt 1000 ] && exit 0
+[ "${XDG_SESSION_CLASS:-}" = "greeter" ] && exit 0
 case "$(id -u -n 2>/dev/null)" in
     gdm|gdm-greeter|gnome-initial-setup) exit 0 ;;
 esac

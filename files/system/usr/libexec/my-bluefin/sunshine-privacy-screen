@@ -22,7 +22,7 @@ if [ -z "${PULSE_SERVER:-}" ] && [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pu
 fi
 
 STATE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sunshine"
-RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}/sunshine"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/sunshine"
 STATE_FILE="${STATE_DIR}/saved_brightness"
 AMBIENT_STATE_FILE="${STATE_DIR}/saved_ambient_enabled"
 AUDIO_STATE_FILE="${STATE_DIR}/saved_audio_mute"
@@ -331,7 +331,7 @@ is_sunshine_running() {
     if systemctl --user is-active --quiet "$svc" 2>/dev/null; then
         return 0
     fi
-    if pgrep -u "$UID" -x "sunshine" >/dev/null 2>&1 || pgrep -x "sunshine" >/dev/null 2>&1; then
+    if pgrep -u "$UID" -x "sunshine" >/dev/null 2>&1; then
         return 0
     fi
     return 1

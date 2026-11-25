@@ -64,15 +64,9 @@ do_reset_desktop() {
     dconf reset -f /org/gnome/ 2>/dev/null || true
     dconf reset -f /org/freedesktop/ 2>/dev/null || true
 
-    # 重新激活系统级预置扩展
-    if [ -d "/usr/share/gnome-shell/extensions" ]; then
-        for ext_path in /usr/share/gnome-shell/extensions/*; do
-            if [ -d "${ext_path}" ]; then
-                ext_uuid=$(basename "${ext_path}")
-                gnome-extensions enable "${ext_uuid}" 2>/dev/null || true
-            fi
-        done
-    fi
+    # 仅恢复系统编译预设的默认扩展列表，避免盲目启用全部扩展目录
+    dconf reset /org/gnome/shell/enabled-extensions 2>/dev/null || true
+    dconf reset /org/gnome/shell/disabled-extensions 2>/dev/null || true
     log_success "GNOME 桌面环境与系统扩展已恢复出厂配置！"
 }
 
@@ -101,7 +95,12 @@ do_reset_terminal_env() {
         cp -f /usr/share/ublue-os/my-brew/wezterm.lua "$HOME/.config/wezterm/wezterm.lua"
         chmod 644 "$HOME/.config/wezterm/wezterm.lua"
     fi
-    rm -f "$HOME/.config/opencode-initialized" "$HOME/.local/state/vscode-provisioned.list" "$HOME/.local/state/.desktop-firstboot-done"
+    rm -f "$HOME/.config/opencode-initialized" \
+        "$HOME/.local/state/opencode-image.sha256" \
+        "$HOME/.local/state/vscode-provisioned.list" \
+        "$HOME/.local/state/brew-provisioned.list" \
+        "$HOME/.local/state/.rustup-init-done" \
+        "$HOME/.local/state/.desktop-firstboot-done"
     if [ -x /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh ]; then
         /usr/share/ublue-os/user-setup.hooks.d/30-my-brew.sh 2>/dev/null || true
     fi

@@ -22,14 +22,17 @@ if [ -z "${SYSTEM_GNOME_VER}" ]; then
 fi
 echo "==> 检测到当前容器环境 GNOME 大版本: [${SYSTEM_GNOME_VER}]"
 
-# 3. 逐个处理扩展安装
-for ITEM in ${INSTALL_ITEMS}; do
+# 3. 逐个处理扩展安装（按行读取，支持含空格的扩展名称）
+RESOLVED_UUIDS=""
+while IFS= read -r ITEM; do
+    [ -z "${ITEM}" ] && continue
     echo "------------------------------------------------------------------------------"
     echo "==> 正在检索并解析扩展: [${ITEM}]..."
 
     # 若系统目录已预置该扩展（例如基础镜像已包含的 caffeine 或经典菜单组件），直接就绪无需网络拉取
     if [ -d "/usr/share/gnome-shell/extensions/${ITEM}" ] && [ -f "/usr/share/gnome-shell/extensions/${ITEM}/metadata.json" ]; then
         echo "==> 检测到 [${ITEM}] 已预装于系统扩展目录中，跳过在线下载，直接就绪并纳入激活。"
+        RESOLVED_UUIDS+="${ITEM}"$'\n'
         continue
     fi
 
@@ -165,19 +168,20 @@ except Exception as e:
     fi
 
     echo "==> [${EXT_NAME}] (${EXT_UUID}) 部署集成完成！"
-done
+    RESOLVED_UUIDS+="${EXT_UUID}"$'\n'
+done <<< "${INSTALL_ITEMS}"
 
 # ==============================================================================
 # 9. 智能动态闭环：继承上游 Bluefin 官方扩展，并自动激活本次安装的扩展
 # ==============================================================================
 echo "------------------------------------------------------------------------------"
 echo "==> 正在智能合并上游 Bluefin 官方扩展与自定义扩展清单..."
-python3 - "${INSTALL_ITEMS}" << 'PYEOF'
+python3 - "${RESOLVED_UUIDS}" << 'PYEOF'
 import os
 import re
 import sys
 
-raw_declared = sys.argv[1].split() if len(sys.argv) > 1 else []
+raw_declared = [line.strip() for line in sys.argv[1].splitlines() if line.strip()] if len(sys.argv) > 1 else []
 SCHEMAS_DIR = "/usr/share/glib-2.0/schemas"
 EXT_BASE = "/usr/share/gnome-shell/extensions"
 

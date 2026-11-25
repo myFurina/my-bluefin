@@ -164,16 +164,15 @@ do_create() {
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
-    # 5. 写入快照元数据
-    cat << EOF > "${target_dir}/info.json"
-{
-  "id": ${snap_id},
-  "name": "${name}",
-  "timestamp": "${timestamp}",
-  "ostree_commit": "${ostree_commit}",
-  "kernel": "${kernel_ver}"
-}
-EOF
+    # 5. 写入快照元数据（通过 jq 安全转义，防止特殊字符破坏 JSON）
+    jq -n \
+        --argjson id "${snap_id}" \
+        --arg name "${name}" \
+        --arg timestamp "${timestamp}" \
+        --arg ostree_commit "${ostree_commit}" \
+        --arg kernel "${kernel_ver}" \
+        '{id: $id, name: $name, timestamp: $timestamp, ostree_commit: $ostree_commit, kernel: $kernel}' \
+        > "${target_dir}/info.json"
 
     sync
     log_success "快照 #${snap_id} 创建成功！已完整锁定当前系统、配置与用户数据。"
@@ -200,7 +199,7 @@ do_list() {
     printf "%-6s  %-20s  %-28s  %-16s\n" "编号" "创建时间" "描述说明" "OS 镜像提交"
     echo "---------------------------------------------------------------------------------"
 
-    for d in $(ls -d "${MNT_DIR}/.snapshots"/* 2>/dev/null | sort -V); do
+    while IFS= read -r -d '' d; do
         local info="${d}/info.json"
         if [ -f "${info}" ]; then
             local id name time commit
@@ -211,7 +210,7 @@ do_list() {
 
             printf "#%-5s  %-20s  %-28s  %-16s\n" "${id}" "${time}" "${name}" "${commit}"
         fi
-    done
+    done < <(find "${MNT_DIR}/.snapshots" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | sort -z -V)
     echo "---------------------------------------------------------------------------------"
 }
 
@@ -225,7 +224,7 @@ do_restore() {
     if [ -z "${target_id}" ]; then
         # 收集可选列表
         local options=()
-        for d in $(ls -d "${MNT_DIR}/.snapshots"/* 2>/dev/null | sort -V); do
+        while IFS= read -r -d '' d; do
             local info="${d}/info.json"
             if [ -f "${info}" ]; then
                 local id name time
@@ -234,7 +233,7 @@ do_restore() {
                 time=$(jq -r '.timestamp' "${info}")
                 options+=("#${id} | ${time} | ${name}")
             fi
-        done
+        done < <(find "${MNT_DIR}/.snapshots" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | sort -z -V)
 
         if [ ${#options[@]} -eq 0 ]; then
             log_error "无可用于还原的历史快照。"
@@ -255,6 +254,11 @@ do_restore() {
         if [ -n "${selected}" ]; then
             target_id=$(echo "${selected}" | awk '{print $1}' | tr -d '#')
         fi
+    fi
+
+    if [[ ! "${target_id}" =~ ^[0-9]+$ ]]; then
+        log_error "无效的快照编号: ${target_id}"
+        return 1
     fi
 
     local snap_dir="${MNT_DIR}/.snapshots/${target_id}"
@@ -347,6 +351,11 @@ do_delete() {
 
     if [ -z "${target_id}" ]; then
         read -r -p "请输入要彻底删除的快照编号 ID: " target_id
+    fi
+
+    if [[ ! "${target_id}" =~ ^[0-9]+$ ]]; then
+        log_error "无效的快照编号: ${target_id}"
+        return 1
     fi
 
     local snap_dir="${MNT_DIR}/.snapshots/${target_id}"

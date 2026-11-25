@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -oue pipefail
+set -euo pipefail
 
 echo "=============================================================================="
 echo "==> 启动 Cloudflare WARP 官方软件源自适应嗅探与准备..."

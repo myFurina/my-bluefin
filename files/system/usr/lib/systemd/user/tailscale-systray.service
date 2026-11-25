@@ -4,6 +4,10 @@ Documentation=https://tailscale.com/kb/1597/linux-systray
 Requires=dbus.service
 After=dbus.service graphical-session.target
 PartOf=graphical-session.target
+ConditionUser=!@system
+ConditionUser=!gdm-greeter
+ConditionUser=!gdm
+ConditionEnvironment=!XDG_SESSION_CLASS=greeter
 
 [Service]
 Type=simple

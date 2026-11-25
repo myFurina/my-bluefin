@@ -120,8 +120,9 @@ modules:
     configurations:
       - scope: system
         notify: true
-        repo-name: flathub
-        repo-url: https://dl.flathub.org/repo/
+        repo:
+          name: flathub
+          url: https://dl.flathub.org/repo/flathub.flatpakrepo
         install:
           # --- 核心网络与办公套件 ---
           - org.mozilla.firefox                     # 火狐浏览器（含全套非自由多媒体解码器）

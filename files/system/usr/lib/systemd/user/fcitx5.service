@@ -6,6 +6,7 @@ ConditionUser=!@system
 ConditionUser=!gdm-greeter
 ConditionUser=!gdm
 ConditionGroup=!gdm
+ConditionEnvironment=!XDG_SESSION_CLASS=greeter
 
 [Service]
 Type=simple

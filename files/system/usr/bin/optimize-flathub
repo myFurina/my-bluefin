@@ -28,7 +28,7 @@ import urllib.request
 
 HOSTS_FILE = "/etc/hosts"
 HOSTS_BACKUP = "/etc/hosts.optimize-network.bak"
-LOCK_FILE = "/etc/.optimize-network.lock"
+LOCK_FILE = "/run/optimize-flathub.lock"
 FLATPAK = "/usr/bin/flatpak"
 RESTORECON = "/usr/sbin/restorecon"
 
@@ -128,16 +128,19 @@ def pick_node():
         return ip, ok, median
 
     best = None
+    any_reachable = bool(doh_ips)
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(all_candidates)) as pool:
         for ip, ok, median in pool.map(score, all_candidates):
             log(f"    {ip:<16} 成功 {ok}/{ATTEMPTS}"
                 + (f"  中位 {median}ms" if median else "  全部卡死"))
+            if ok > 0:
+                any_reachable = True
             if ok < MIN_SUCCESS:
                 continue
             key = (ok, -(median or 10 ** 9))
             if best is None or key > best[0]:
                 best = (key, ip)
-    return best[1] if best else None
+    return (best[1] if best else None), any_reachable
 
 
 def is_managed_line(line):
@@ -260,13 +263,16 @@ def main(argv):
         dry_run = True
 
     log(f"==> 探测 {DOMAIN} 候选节点（动态 DoH + 本地池，3 次采样 / 6s）")
-    ip = pick_node()
+    ip, any_reachable = pick_node()
     if ip:
         log(f"==> 选中 {ip}")
-    else:
+        update_hosts(ip, dry_run)
+    elif any_reachable:
         log("==> 所有候选都不稳定，清理 hosts 中的旧记录（回退原生解析）")
+        update_hosts(None, dry_run)
+    else:
+        log("==> 当前网络不可达，保留现有 /etc/hosts 记录")
 
-    update_hosts(ip, dry_run)
     configure_flatpak(dry_run)
     log("==> 完成")
     return 0

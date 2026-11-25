@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -oue pipefail
+set -euo pipefail
 
 # ==============================================================================
 # 1. 收敛 Cloudflare WARP 自启残留与恢复标准软件源
@@ -35,7 +35,7 @@ echo "==> 正在校准系统脚本权限、建立服务软链接并编译 GSetti
 chmod 644 /usr/share/polkit-1/rules.d/50-warp-service.rules /usr/share/polkit-1/rules.d/50-libvirt-nopasswd.rules
 chmod 755 /usr/bin/fcitx5-prestart-setup /usr/bin/optimize-flathub
 chmod 755 /usr/libexec/my-bluefin/* 2>/dev/null || true
-chmod 644 /usr/share/ublue-os/grub2/user.cfg /usr/share/ublue-os/vscode/extensions.list /usr/share/ublue-os/vscode/extensions/*.vsix 2>/dev/null || true
+chmod 644 /usr/share/ublue-os/grub2/user.cfg 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/just/60-custom.just /usr/share/applications/*.desktop 2>/dev/null || true
 chmod 644 /etc/profile.d/90-rust-cargo.sh /usr/lib/environment.d/10-rust-mirror.conf /etc/ssh/ssh_config.d/*.conf /usr/lib/tmpfiles.d/*.conf 2>/dev/null || true
 # 尝试同步社区最新 Android udev 规则（网络畅通即更新到最新，网络受限则保留仓库中内置的静态兜底版本）
@@ -64,7 +64,7 @@ systemctl --global preset-all 2>/dev/null || true
 # 彻底屏蔽 GNOME 默认 IBus 会话拉起，确保单 Fcitx5 雾凇常驻零冲突
 rm -f /usr/lib/systemd/user/gnome-session.target.wants/org.freedesktop.IBus.session.GNOME.service
 ln -sf /dev/null /usr/lib/systemd/user/org.freedesktop.IBus.session.GNOME.service
-rm -f /etc/xdg/Xwayland-session.d/10-ibus-x11 /usr/etc/xdg/Xwayland-session.d/10-ibus-x11
+rm -f /etc/xdg/Xwayland-session.d/10-ibus-x11
 
-glib-compile-schemas /usr/share/glib-2.0/schemas/
+glib-compile-schemas --strict /usr/share/glib-2.0/schemas/
 flatpak remote-modify --system --disable fedora 2>/dev/null || true

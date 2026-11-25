@@ -25,11 +25,11 @@ fi
 # 当镜像内置了 NotoSansSC-Mega 定制字体族时，自动同步至用户态并配置各应用对应字体路径
 if [ -d /usr/share/fonts/NotoSansSC-Mega ]; then
     mkdir -p "$HOME/.local/share/fonts"
-    # 2.1 同步用户字体库 NotoSansSC-Mega 字体族（包含 Regular 常规体与 Bold 原生粗体，供 MarkText、LocalSend 原生匹配）
+    # 2.1 同步用户字体库 NotoSansSC-Mega 字体族（使用内容比对避免 OSTree /usr 1970 时间戳导致无法更新）
     for f in /usr/share/fonts/NotoSansSC-Mega/*.ttf; do
         if [ -f "$f" ]; then
             fname=$(basename "$f")
-            if [ ! -f "$HOME/.local/share/fonts/$fname" ] || [ "$f" -nt "$HOME/.local/share/fonts/$fname" ]; then
+            if [ ! -f "$HOME/.local/share/fonts/$fname" ] || ! cmp -s "$f" "$HOME/.local/share/fonts/$fname"; then
                 cp -f "$f" "$HOME/.local/share/fonts/$fname"
             fi
         fi
@@ -46,25 +46,29 @@ if [ -d /usr/share/fonts/NotoSansSC-Mega ]; then
     WILIWILI_CONF_DIR="$HOME/.var/app/cn.xfangfang.wiliwili/config/wiliwili"
     mkdir -p "${WILIWILI_CONF_DIR}"
     if [ -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Regular.ttf" ]; then
-        if [ ! -f "${WILIWILI_CONF_DIR}/font.ttf" ] || [ "$HOME/.local/share/fonts/NotoSansSC-Mega-Regular.ttf" -nt "${WILIWILI_CONF_DIR}/font.ttf" ]; then
+        if [ ! -f "${WILIWILI_CONF_DIR}/font.ttf" ] || ! cmp -s "$HOME/.local/share/fonts/NotoSansSC-Mega-Regular.ttf" "${WILIWILI_CONF_DIR}/font.ttf"; then
             cp -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Regular.ttf" "${WILIWILI_CONF_DIR}/font.ttf"
         fi
     fi
     if [ -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Bold.ttf" ]; then
-        if [ ! -f "${WILIWILI_CONF_DIR}/danmaku.ttf" ] || [ "$HOME/.local/share/fonts/NotoSansSC-Mega-Bold.ttf" -nt "${WILIWILI_CONF_DIR}/danmaku.ttf" ]; then
+        if [ ! -f "${WILIWILI_CONF_DIR}/danmaku.ttf" ] || ! cmp -s "$HOME/.local/share/fonts/NotoSansSC-Mega-Bold.ttf" "${WILIWILI_CONF_DIR}/danmaku.ttf"; then
             cp -f "$HOME/.local/share/fonts/NotoSansSC-Mega-Bold.ttf" "${WILIWILI_CONF_DIR}/danmaku.ttf"
         fi
     fi
 fi
 
-# 3. 托管 OpenCode V2 至用户可写目录 ~/.local/bin/opencode（未安装则装，有镜像更新则更新）
-if [ ! -f "$HOME/.config/opencode-initialized" ] && [ -f /usr/share/ublue-os/my-brew/opencode ]; then
-    cp -f /usr/share/ublue-os/my-brew/opencode "$HOME/.local/bin/opencode"
-    chmod 755 "$HOME/.local/bin/opencode"
-    touch "$HOME/.config/opencode-initialized"
-elif [ -f "$HOME/.local/bin/opencode" ] && [ -f /usr/share/ublue-os/my-brew/opencode ]; then
-    cp -u /usr/share/ublue-os/my-brew/opencode "$HOME/.local/bin/opencode"
-    chmod 755 "$HOME/.local/bin/opencode"
+# 3. 托管 OpenCode V2 至用户可写目录 ~/.local/bin/opencode（按镜像哈希增量同步，既不受 OSTree 1970 时间戳影响，也不覆盖用户手动升级）
+IMAGE_OPENCODE="/usr/share/ublue-os/my-brew/opencode"
+OPENCODE_SHA_FILE="$HOME/.local/state/opencode-image.sha256"
+if [ -f "${IMAGE_OPENCODE}" ]; then
+    current_img_sha=$(sha256sum "${IMAGE_OPENCODE}" | awk '{print $1}')
+    last_img_sha=$(cat "${OPENCODE_SHA_FILE}" 2>/dev/null || true)
+    if [ ! -f "$HOME/.config/opencode-initialized" ] || [ ! -x "$HOME/.local/bin/opencode" ] || [ "${current_img_sha}" != "${last_img_sha}" ]; then
+        cp -f "${IMAGE_OPENCODE}" "$HOME/.local/bin/opencode"
+        chmod 755 "$HOME/.local/bin/opencode"
+        echo "${current_img_sha}" > "${OPENCODE_SHA_FILE}"
+        touch "$HOME/.config/opencode-initialized"
+    fi
 fi
 
 # 4. 确保 ~/.bashrc 中包含 Homebrew 清华源环境变量（含 Git 镜像）及首次就绪检测
@@ -91,16 +95,19 @@ fi
 
 # 5. 自动校准 Homebrew 自身 Git 仓库至清华镜像（一次性操作，成功后立 flag 永久跳过）
 BREW_MIRROR_FLAG="$HOME/.local/state/.brew-git-mirror-done"
-if [ ! -f "$BREW_MIRROR_FLAG" ]; then
-    brew_repo="/home/linuxbrew/.linuxbrew/Homebrew"
+configure_brew_git_mirror() {
+    [ -f "$BREW_MIRROR_FLAG" ] && return 0
+    local brew_repo="${1:-/home/linuxbrew/.linuxbrew/Homebrew}"
     if [ -d "${brew_repo}/.git" ]; then
+        local current_brew_remote
         current_brew_remote=$(git -C "${brew_repo}" remote get-url origin 2>/dev/null || true)
         if [[ "${current_brew_remote}" =~ github\.com/Homebrew/brew ]]; then
             git -C "${brew_repo}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git" 2>/dev/null || true
         fi
 
-        core_tap="${brew_repo}/Library/Taps/homebrew/homebrew-core"
+        local core_tap="${brew_repo}/Library/Taps/homebrew/homebrew-core"
         if [ -d "${core_tap}/.git" ]; then
+            local current_core_remote
             current_core_remote=$(git -C "${core_tap}" remote get-url origin 2>/dev/null || true)
             if [[ "${current_core_remote}" =~ github\.com/Homebrew/homebrew-core ]]; then
                 git -C "${core_tap}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git" 2>/dev/null || true
@@ -108,7 +115,8 @@ if [ ! -f "$BREW_MIRROR_FLAG" ]; then
         fi
         touch "$BREW_MIRROR_FLAG"
     fi
-fi
+}
+configure_brew_git_mirror "/home/linuxbrew/.linuxbrew/Homebrew"
 
 # 6. 增量差分检测：仅对未推介过的新配方执行安装，用户主动卸载的工具绝不重新下载
 BREWFILE="/usr/share/ublue-os/my-brew/Brewfile"
@@ -186,26 +194,7 @@ run_brew_worker() {
     export HOMEBREW_NO_AUTO_UPDATE=1
 
     # 若此前尚未完成校准（如首登未解压完毕），在此完成兜底并立 flag 永久跳过
-    if [ ! -f "$BREW_MIRROR_FLAG" ]; then
-        brew_repo="$("${BREW_BIN}" --repo 2>/dev/null || echo "/home/linuxbrew/.linuxbrew/Homebrew")"
-        if [ -d "${brew_repo}/.git" ]; then
-            current_brew_remote=$(git -C "${brew_repo}" remote get-url origin 2>/dev/null || true)
-            if [[ "${current_brew_remote}" =~ github\.com/Homebrew/brew ]]; then
-                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 自动切换 Homebrew 核心程序至清华镜像源..."
-                git -C "${brew_repo}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/brew.git" 2>/dev/null || true
-            fi
-        fi
-
-        core_tap="${brew_repo}/Library/Taps/homebrew/homebrew-core"
-        if [ -d "${core_tap}/.git" ]; then
-            current_core_remote=$(git -C "${core_tap}" remote get-url origin 2>/dev/null || true)
-            if [[ "${current_core_remote}" =~ github\.com/Homebrew/homebrew-core ]]; then
-                echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 自动切换 homebrew-core tap 至清华镜像源..."
-                git -C "${core_tap}" remote set-url origin "https://mirrors.tuna.tsinghua.edu.cn/git/homebrew/homebrew-core.git" 2>/dev/null || true
-            fi
-        fi
-        touch "$BREW_MIRROR_FLAG"
-    fi
+    configure_brew_git_mirror "$("${BREW_BIN}" --repo 2>/dev/null || echo "/home/linuxbrew/.linuxbrew/Homebrew")"
 
     echo "==> [$(date '+%Y-%m-%d %H:%M:%S')] 发现 ${#pending_formulas[@]} 个待推介工具: ${pending_formulas[*]}"
 
