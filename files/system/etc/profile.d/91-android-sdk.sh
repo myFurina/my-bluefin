@@ -1,6 +1,6 @@
-# Android SDK & JDK 21 用户级开发环境注入（与 environment.d/20-android.conf 保持一致）
-if [ -d /usr/lib/jvm/java-21-openjdk ] && [ -z "${JAVA_HOME:-}" ]; then
-    export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+# Android SDK & Fedora 默认 LTS OpenJDK 用户级开发环境注入（与 environment.d/20-android.conf 保持一致）
+if [ -d /usr/lib/jvm/java-openjdk ] && [ -z "${JAVA_HOME:-}" ]; then
+    export JAVA_HOME=/usr/lib/jvm/java-openjdk
 fi
 
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"

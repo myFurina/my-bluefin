@@ -83,8 +83,10 @@ cp -a "${TMP_UNZIP}/cmdline-tools/." "${TARGET_DIR}/cmdline-tools/latest/"
 rm -f "${TMP_ZIP}"
 rm -rf "${TMP_UNZIP}"
 
-if [ -d /usr/lib/jvm/java-21-openjdk ]; then
-    export JAVA_HOME="/usr/lib/jvm/java-21-openjdk"
+if [ -d /usr/lib/jvm/java-openjdk ]; then
+    export JAVA_HOME="/usr/lib/jvm/java-openjdk"
+elif command -v javac >/dev/null 2>&1; then
+    export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
 fi
 
 SDKMANAGER="${TARGET_DIR}/cmdline-tools/latest/bin/sdkmanager"

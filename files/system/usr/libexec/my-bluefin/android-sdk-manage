@@ -53,7 +53,7 @@ do_setup() {
 
 do_status() {
     echo "=== Android 本地构建环境状态 ==="
-    echo "JAVA_HOME : ${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk}"
+    echo "JAVA_HOME : ${JAVA_HOME:-/usr/lib/jvm/java-openjdk}"
     if command -v java >/dev/null 2>&1; then
         echo "Java 版本 : $(java -version 2>&1 | head -n 1)"
     else
