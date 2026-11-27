@@ -54,6 +54,8 @@ modules:
         - libxkbcommon-devel                    # XKB 键盘布局与输入法处理头文件（Iced / winit）
         - fontconfig-devel                      # 系统字体发现编译头文件
         - freetype-devel                        # 字体渲染编译头文件
+        # --- Android APK 本地构建底座 (JDK 21 LTS) ---
+        - java-21-openjdk-devel                 # JDK 21 LTS（原生跑通 Gradle 8.5+/9.x 与 AGP 8.x/9.0）
     remove:
       packages:
         - firefox                      # 移除原生火狐（改用自带全套解码器的 Flatpak 沙盒版）
@@ -85,6 +87,13 @@ modules:
 
   - type: antigravity
     source: local
+
+  - type: android-cmdline-tools
+    source: local
+    packages:
+      - platform-tools
+      - platforms;android-36
+      - build-tools;36.0.0
 
   - type: vscode-extensions
     source: local

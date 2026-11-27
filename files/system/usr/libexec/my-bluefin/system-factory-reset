@@ -198,6 +198,9 @@ mode_nuclear_reset() {
     if [ -x /usr/share/ublue-os/user-setup.hooks.d/50-rustup-init.sh ]; then
         /usr/share/ublue-os/user-setup.hooks.d/50-rustup-init.sh 2>/dev/null || true
     fi
+    if [ -x /usr/share/ublue-os/user-setup.hooks.d/60-android-sdk.sh ]; then
+        /usr/share/ublue-os/user-setup.hooks.d/60-android-sdk.sh 2>/dev/null || true
+    fi
 
     log_success "主目录已彻底重构为纯净开箱状态！"
     log_info "系统正在自动退出当前图形会话以重新加载出厂用户环境..."

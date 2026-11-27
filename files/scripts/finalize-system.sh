@@ -37,7 +37,7 @@ chmod 755 /usr/bin/fcitx5-prestart-setup /usr/bin/optimize-flathub
 chmod 755 /usr/libexec/my-bluefin/* 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/grub2/user.cfg 2>/dev/null || true
 chmod 644 /usr/share/ublue-os/just/60-custom.just /usr/share/applications/*.desktop 2>/dev/null || true
-chmod 644 /etc/profile.d/90-rust-cargo.sh /usr/lib/environment.d/10-rust-mirror.conf /etc/ssh/ssh_config.d/*.conf /usr/lib/tmpfiles.d/*.conf 2>/dev/null || true
+chmod 644 /etc/profile.d/*.sh /usr/lib/environment.d/*.conf /etc/ssh/ssh_config.d/*.conf /usr/lib/tmpfiles.d/*.conf 2>/dev/null || true
 # 尝试同步社区最新 Android udev 规则（网络畅通即更新到最新，网络受限则保留仓库中内置的静态兜底版本）
 curl -fsSL https://raw.githubusercontent.com/M0Rf30/android-udev-rules/main/51-android.rules \
     -o /usr/lib/udev/rules.d/51-android.rules 2>/dev/null || true

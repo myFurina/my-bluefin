@@ -46,3 +46,21 @@ snapshot-delete ID="":
 sunshine ACTION="toggle":
     #!/usr/bin/env bash
     exec /usr/libexec/my-bluefin/sunshine-gui-launcher "{{ ACTION }}"
+
+# 初始化或修复本地 Android 16 (API 36) SDK 与 Gradle 国内镜像
+[group('Android')]
+android-setup:
+    #!/usr/bin/env bash
+    /usr/libexec/my-bluefin/android-sdk-manage setup
+
+# 查看本地 Android 构建环境、已安装 SDK 与磁盘占用
+[group('Android')]
+android-status:
+    #!/usr/bin/env bash
+    /usr/libexec/my-bluefin/android-sdk-manage status
+
+# 清理 Gradle 缓存或彻底清空用户态 Android SDK（防复活）
+[group('Android')]
+android-clean MODE="":
+    #!/usr/bin/env bash
+    /usr/libexec/my-bluefin/android-sdk-manage clean "{{ MODE }}"

@@ -1,0 +1,10 @@
+name: android-cmdline-tools
+shortdesc: 构建期离线预缓存 Google 官方最新版 Android Command-line Tools、许可协议及指定 SDK 组件至系统只读模板目录，配合首登钩子实现本机 0 代理秒级就绪。
+example: |
+  - type: android-cmdline-tools
+    source: local
+    target_dir: /usr/share/ublue-os/android-sdk
+    packages:
+      - platform-tools
+      - platforms;android-36
+      - build-tools;36.0.0

@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# My-Bluefin Android 本地构建环境管理中心 (ujust android-*)
+# ==============================================================================
+set -euo pipefail
+
+HOOK_SCRIPT="/usr/share/ublue-os/user-setup.hooks.d/60-android-sdk.sh"
+DONE_FLAG="$HOME/.local/state/.android-sdk-init-done"
+ANDROID_DIR="$HOME/Android"
+SDK_DIR="$HOME/Android/Sdk"
+GRADLE_DIR="$HOME/.gradle"
+ANDROID_DOT_DIR="$HOME/.android"
+LOG_FILE="$HOME/.local/state/android-sdk-setup.log"
+
+has_gum() {
+    command -v gum >/dev/null 2>&1
+}
+
+log_info() {
+    if has_gum; then
+        gum style --foreground 75 "==> $1"
+    else
+        echo "==> $1"
+    fi
+}
+
+log_success() {
+    if has_gum; then
+        gum style --bold --foreground 82 "✔ $1"
+    else
+        echo "✔ $1"
+    fi
+}
+
+log_warn() {
+    if has_gum; then
+        gum style --bold --foreground 214 "⚠ $1"
+    else
+        echo "⚠ $1"
+    fi
+}
+
+do_setup() {
+    if [ ! -x "${HOOK_SCRIPT}" ]; then
+        echo "✖ 未找到初始化脚本: ${HOOK_SCRIPT}" >&2
+        exit 1
+    fi
+    mkdir -p "$HOME/.local/state"
+    rm -f "${DONE_FLAG}"
+    log_info "正在从系统离线模板 (/usr/share/ublue-os/android-sdk) 初始化 / 修复 Android 16 (API 36) 构建环境..."
+    MY_BLUEFIN_ANDROID_FOREGROUND=1 "${HOOK_SCRIPT}"
+}
+
+do_status() {
+    echo "=== Android 本地构建环境状态 ==="
+    echo "JAVA_HOME : ${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk}"
+    if command -v java >/dev/null 2>&1; then
+        echo "Java 版本 : $(java -version 2>&1 | head -n 1)"
+    else
+        echo "Java 版本 : 未检测到 java"
+    fi
+    echo "SDK 路径  : ${ANDROID_HOME:-$SDK_DIR}"
+    echo "初始化标志: $([ -f "${DONE_FLAG}" ] && echo "已存在 (${DONE_FLAG})" || echo "未设置")"
+
+    if [ -d "${SDK_DIR}" ]; then
+        echo ""
+        echo "--- 已安装 SDK 组件 ---"
+        echo "platform-tools: $([ -d "${SDK_DIR}/platform-tools" ] && echo "已安装" || echo "未安装")"
+        echo "platforms     : $(ls -1 "${SDK_DIR}/platforms" 2>/dev/null | tr '\n' ' ' || echo "无")"
+        echo "build-tools   : $(ls -1 "${SDK_DIR}/build-tools" 2>/dev/null | tr '\n' ' ' || echo "无")"
+        echo "ndk           : $(ls -1 "${SDK_DIR}/ndk" 2>/dev/null | tr '\n' ' ' || echo "未安装")"
+    fi
+
+    echo ""
+    echo "--- 用户目录磁盘占用 ---"
+    for p in "${ANDROID_DIR}" "${GRADLE_DIR}" "${ANDROID_DOT_DIR}"; do
+        if [ -d "$p" ]; then
+            echo "  $(du -sh "$p" 2>/dev/null | awk '{print $1 "\t" $2}')"
+        else
+            echo "  0B	$p (不存在)"
+        fi
+    done
+}
+
+do_clean() {
+    local mode="${1:-}"
+
+    if [ -z "${mode}" ]; then
+        if has_gum; then
+            local choice
+            choice=$(gum choose \
+                "1. 仅清理 Gradle 构建缓存 (~/.gradle/caches，保留 SDK 与镜像配置)" \
+                "2. 彻底清空全部用户态 Android 环境 (~/Android, ~/.gradle, ~/.android)" \
+                "3. 取消")
+            case "${choice}" in
+                1.*) mode="caches" ;;
+                2.*) mode="all" ;;
+                *) echo "已取消。"; return 0 ;;
+            esac
+        else
+            echo "1) 仅清理 Gradle 构建缓存 (~/.gradle/caches)"
+            echo "2) 彻底清空全部用户态 Android 环境 (~/Android, ~/.gradle, ~/.android)"
+            echo "3) 取消"
+            read -rp "请选择 [1-3]: " num
+            case "${num}" in
+                1) mode="caches" ;;
+                2) mode="all" ;;
+                *) echo "已取消。"; return 0 ;;
+            esac
+        fi
+    fi
+
+    case "${mode}" in
+        caches|--caches)
+            if [ -d "${GRADLE_DIR}/caches" ]; then
+                local size
+                size=$(du -sh "${GRADLE_DIR}/caches" 2>/dev/null | awk '{print $1}' || echo "未知")
+                rm -rf "${GRADLE_DIR}/caches"
+                log_success "已清理 ~/.gradle/caches（释放约 ${size}），Android SDK 与镜像配置已保留。"
+            else
+                log_info "~/.gradle/caches 不存在，无需清理。"
+            fi
+            ;;
+        all|--all)
+            if [ "${1:-}" != "--all" ]; then
+                if has_gum; then
+                    gum confirm "确定删除 ~/Android、~/.gradle 与 ~/.android 吗？（后续可随时通过 'ujust android-setup' 重新初始化）" || { echo "已取消。"; return 0; }
+                else
+                    read -rp "确定删除 ~/Android、~/.gradle 与 ~/.android 吗？(y/N): " confirm
+                    [[ "${confirm}" =~ ^[Yy]$ ]] || { echo "已取消。"; return 0; }
+                fi
+            fi
+            rm -rf "${ANDROID_DIR}" "${GRADLE_DIR}" "${ANDROID_DOT_DIR}" "${LOG_FILE}"
+            # 保留防复活标志，防止下次登录自动重下；需要时可手动运行 ujust android-setup
+            mkdir -p "$HOME/.local/state"
+            touch "${DONE_FLAG}"
+            log_success "已彻底清空用户态 Android 目录（~/Android、~/.gradle、~/.android），且不会在下次登录自动恢复。"
+            ;;
+        *)
+            echo "用法: $0 clean [--caches|--all]" >&2
+            exit 1
+            ;;
+    esac
+}
+
+cmd="${1:-status}"
+shift 2>/dev/null || true
+
+case "${cmd}" in
+    setup|init)
+        do_setup
+        ;;
+    clean)
+        do_clean "${1:-}"
+        ;;
+    status)
+        do_status
+        ;;
+    *)
+        echo "用法: $0 {setup|clean [--caches|--all]|status}" >&2
+        exit 1
+        ;;
+esac
